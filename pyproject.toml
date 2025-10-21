@@ -1,6 +1,6 @@
 [project]
 name = "pytol"
-version = "0.1.1"
+version = "0.1.3"
 authors = [
   { name="Fran-98", email="franciscopvargas98@gmail.com" },
 ]

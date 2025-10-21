@@ -1,7 +1,7 @@
 # Pytol - VTOL VR Mission Generation Library
 
 <p align="center">
-  <img src="docs/img/banner.png" alt="Pytol Banner">
+  <img src="https://raw.githubusercontent.com/Fran-98/pytol/refs/heads/main/docs/img/banner.png" alt="Pytol Banner">
 </p>
 
 [![PyPI version](https://badge.fury.io/py/pytol.svg)](https://pypi.org/project/pytol/)
