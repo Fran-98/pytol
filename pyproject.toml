@@ -1,0 +1,47 @@
+[project]
+name = "pytol"
+version = "0.1.1"
+authors = [
+  { name="Fran-98", email="franciscopvargas98@gmail.com" },
+]
+description = "Mission generation for VTOL VR with python."
+readme = "README.md"
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+# Ensure license is defined correctly (e.g., using SPDX identifier)
+license = "GPL-3.0-only" 
+
+dependencies = [
+    "numpy",
+    "pillow",
+    "scipy",
+    "python-dotenv"
+]
+
+[project.urls]
+Homepage = "https://github.com/Fran-98/pytol"
+Issues = "https://github.com/Fran-98/pytol/issues"
+
+# =======================================================
+# Build System (Hatchling)
+# =======================================================
+[build-system]
+requires = ["hatchling"] # Simpler to only include the build backend
+build-backend = "hatchling.build"
+
+# =======================================================
+# Hatchling Configuration (CRITICAL SECTION)
+# =======================================================
+[tool.hatch.build.targets.sdist]
+# This MUST be an array/list of strings using square brackets [...]
+include = [
+    "pytol",
+    "LICENSE",
+    "README.md",
+    "requirements.txt",
+    "pytol/resources/*.json",
+    "pytol/resources/*.png",
+]

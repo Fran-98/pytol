@@ -1,7 +1,17 @@
+# Custom 
+
+test_map
+GameData
+GameDataComplete
+generated_city_blocks.json
+generated_static_prefabs.json
+*.venv*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
+test_scripts
 
 # C extensions
 *.so
