@@ -60,7 +60,7 @@ class TerrainCalculator:
             self.map_dir = map_directory_path
             self.map_name = os.path.basename(os.path.normpath(map_directory_path))
         elif map_name and vtol_directory:
-            self.map_dir = os.path.join(vtol_directory, 'CustomMaps', map_name)
+            self.map_dir = os.path.join(os.path.normpath(vtol_directory), 'CustomMaps', map_name)
         elif map_name and os.getenv('VTOL_VR_DIR'):
             self.map_dir = os.path.join(os.path.normpath(os.getenv('VTOL_VR_DIR')), 'CustomMaps', map_name)
         else:
@@ -93,7 +93,7 @@ class TerrainCalculator:
         vtm_filename = os.path.basename(os.path.normpath(map_directory_path)) + ".vtm"
         vtm_path = os.path.join(self.map_dir, vtm_filename)
         try:
-            with open(vtm_path, 'r', encoding='utf-8') as f: 
+            with open(os.path.normpath(vtm_path), 'r', encoding='utf-8') as f:
                 vtm_content = f.read()
         except FileNotFoundError as e: 
             raise FileNotFoundError(f"Fatal Error! .vtm file not found: '{vtm_path}'.") from e

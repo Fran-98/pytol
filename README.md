@@ -22,7 +22,7 @@ This enables automation in mission creation, allowing for more dynamic and compl
   <br>
   ⚠️ <strong>Disclaimer</strong> ⚠️
   <br><br>
-  <em>This library is a work in progress, some features will not work as intended yet.</em>
+  <em>This library is a work in progress, some features will not work as intended yet. Read the Known Issues section.</em>
   <br>
 </h3>
 
@@ -71,7 +71,8 @@ pip install -e .
 ```
 
 You also need to ensure the **VTOL VR game directory** is accessible on both methods, either by setting the `VTOL_VR_DIR` environment variable or by providing paths directly during initialization.
------
+
+---
 
 ## Getting Started
 
@@ -298,7 +299,12 @@ If you'd like to support the project financially, you can help cover development
 </p>
 
 -----
+## Known Issues
 
+- Terrain around airbases need to be adjusted as they deform terrain. Will be implemented soon
+- Need to pay attention to the terrain around cities as some city blocks deform terrain. Similar problem as airbases
+
+-----
 ## License
 
 This project is licensed under the **GNU General Public License v3.0 only**. See the [LICENSE](https://www.gnu.org/licenses/gpl-3.0.en.html) file for details.
