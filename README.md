@@ -56,15 +56,19 @@ pip install pytol
 
 ### 2. From Source (For development)
 
-´´´bash
-# 1. Clone the repo
+
+1. Clone the repo
+```bash
 git clone [https://github.com/Fran-98/pytol](https://github.com/Fran-98/pytol)  # Replace with your actual repo URL
 cd Pytol
+```
 
-# 2. Install in editable mode
+2. Install in editable mode
+
+```bash
 # This allows you to make changes to the source code and have them reflected immediately
 pip install -e .
-´´´
+```
 
 You also need to ensure the **VTOL VR game directory** is accessible on both methods, either by setting the `VTOL_VR_DIR` environment variable or by providing paths directly during initialization.
 -----
@@ -289,7 +293,9 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 
 If you'd like to support the project financially, you can help cover development costs or contribute towards upgrading development hardware (like my Quest 2) by buying me a coffee:
 
-<p align="center"><a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" alt="Buy Me A Coffee"/></a></p>
+<p align="center">
+  <a href="https://www.buymeacoffee.com/franman" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" style="height: 41px !important;width: 174px !important;box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;-webkit-box-shadow: 0px 3px 2px 0px rgba(190, 190, 190, 0.5) !important;" ></a>
+</p>
 
 -----
 
