@@ -6,7 +6,9 @@
 
 [![PyPI version](https://badge.fury.io/py/pytol.svg)](https://pypi.org/project/pytol/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-
+<!-- <p align="center"> -->
+<a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" /></a>
+<!-- </p> -->
 **Pytol** is a Python library for procedurally generating missions for the VR flight game **VTOL VR**. It provides tools to:
 
 * Load and analyze VTOL VR custom map data (`.vtm` files).
@@ -16,6 +18,14 @@
 * Construct and save valid VTOL VR mission files (`.vts`).
 
 This enables automation in mission creation, allowing for more dynamic and complex scenarios. 🗺️✈️
+
+<h3 align="center">
+  <br>
+  ⚠️ <strong>Disclaimer</strong> ⚠️
+  <br><br>
+  <em>This library is a work in progress, some features will not work as intended yet.</em>
+  <br>
+</h3>
 
 ---
 
@@ -34,13 +44,30 @@ This enables automation in mission creation, allowing for more dynamic and compl
 
 ## Installation
 
+There are two ways to install Pytol:
+
+### 1. From PyPI (Recommended for users)
+
+If you just want to use the library, you can install the latest stable release directly from the Python Package Index (PyPI):
+
 ```bash
 # Navigate to the directory containing Pytol's setup.py (or the pytol folder itself)
 pip install pytol
-````
+```
 
-You also need to ensure the **VTOL VR game directory** is accessible, either by setting the `VTOL_VR_DIR` environment variable or by providing paths directly during initialization.
+### 2. From Source (For development)
 
+´´´bash
+# 1. Clone the repo
+git clone [https://github.com/Fran-98/pytol](https://github.com/Fran-98/pytol)  # Replace with your actual repo URL
+cd Pytol
+
+# 2. Install in editable mode
+# This allows you to make changes to the source code and have them reflected immediately
+pip install -e .
+´´´
+
+You also need to ensure the **VTOL VR game directory** is accessible on both methods, either by setting the `VTOL_VR_DIR` environment variable or by providing paths directly during initialization.
 -----
 
 ## Getting Started
@@ -259,7 +286,13 @@ pip install numpy scipy pillow
 
 ## Contributing
 
-WIP
+Contributions are welcome! Feel free to open issues or submit pull requests.
+
+If you'd like to support the project financially, you can help cover development costs or contribute towards upgrading development hardware (like my Quest 2) by buying me a coffee:
+
+<p align="center">
+  <a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" /></a>
+</p>
 
 -----
 
