@@ -6,9 +6,8 @@
 
 [![PyPI version](https://badge.fury.io/py/pytol.svg)](https://pypi.org/project/pytol/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-<!-- <p align="center"> -->
-<a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" /></a>
-<!-- </p> -->
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/franman)
+
 **Pytol** is a Python library for procedurally generating missions for the VR flight game **VTOL VR**. It provides tools to:
 
 * Load and analyze VTOL VR custom map data (`.vtm` files).
@@ -290,9 +289,7 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 
 If you'd like to support the project financially, you can help cover development costs or contribute towards upgrading development hardware (like my Quest 2) by buying me a coffee:
 
-<p align="center">
-  <a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" /></a>
-</p>
+<p align="center"><a href="https://www.buymeacoffee.com/franman"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee!&emoji=☕&slug=franman&button_colour=5F7FFF&font_colour=ffffff&font_family=Lato&outline_colour=000000&coffee_colour=FFDD00" alt="Buy Me A Coffee"/></a></p>
 
 -----
 
