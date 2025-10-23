@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Union, Dict, Any, cast, Literal
+from dataclasses import dataclass
+from typing import List, Optional, cast, Literal
 
 
 @dataclass(unsafe_hash=True)
@@ -110,6 +110,21 @@ ID_TO_CLASS = {
     "SCCUnitList": Sccunitlist,
     "SCCVehicleControl": Sccvehiclecontrol,
 
+}
+
+CLASS_TO_ID = {
+    Sccand: "SCCAnd",
+    Sccchance: "SCCChance",
+    Sccglobalvalue: "SCCGlobalValue",
+    Sccglobalvaluecompare: "SCCGlobalValueCompare",
+    Sccmpteamstats: "SCCMPTeamStats",
+    Sccor: "SCCOr",
+    Sccstaticobject: "SCCStaticObject",
+    Sccunit: "SCCUnit",
+    Sccunitalive: "SCCUnitAlive",
+    Sccunitgroup: "SCCUnitGroup",
+    Sccunitlist: "SCCUnitList",
+    Sccvehiclecontrol: "SCCVehicleControl",
 }
 
 def create_conditional(

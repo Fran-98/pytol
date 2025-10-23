@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Dict, Any, cast, Literal
-
+from ..classes.mission_objects import Waypoint
 @dataclass
 class Objective:
     """Base class for all mission objectives."""
@@ -9,10 +9,11 @@ class Objective:
     info: str
     type: str # This is the ObjectiveTypes enum string (e.g., "Destroy")
     required: bool = True
-    waypoint: Optional[str] = None
+    waypoint: Optional[Waypoint] = None
     prereqs: Optional[List[int]] = None
     auto_set_waypoint: bool = True
-
+    orderID: int = 0
+    completionReward: int = 0
     # This will hold all the objective 'fields'
     fields: Dict[str, Any] = field(default_factory=dict)
 
