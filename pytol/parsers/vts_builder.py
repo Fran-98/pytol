@@ -1323,7 +1323,6 @@ class Mission:
         ]
         vts += eol.join(root_props) + eol
 
-        # --- VTS Block Order (Important!) ---
         vts += _format_block("WEATHER_PRESETS", "") # TODO
         vts += _format_block("UNITS", c["UNITS"])
         vts += _format_block("PATHS", c["PATHS"])
