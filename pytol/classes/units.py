@@ -1,5 +1,29 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Dict, Any, cast, Literal
+from pytol.classes.actions import (
+    AIAWACSSpawnActions,
+    AIAirTankerSpawnActions,
+    AIAircraftSpawnActions,
+    AICarrierSpawnActions,
+    AIDecoyLauncherSpawnActions,
+    AIDecoyRadarSpawnActions,
+    AIDroneCarrierSpawnActions,
+    AIFixedSAMSpawnActions,
+    AIGroundECMSpawnActions,
+    AIJTACSpawnActions,
+    AILockingRadarSpawnActions,
+    AIMissileSiloActions,
+    AISeaUnitSpawnActions,
+    AIUnitSpawnActions,
+    AIUnitSpawnEquippableActions,
+    APCUnitSpawnActions,
+    ArtilleryUnitSpawnActions,
+    GroundUnitSpawnActions,
+    IFVSpawnActions,
+    MultiplayerSpawnActions,
+    PlayerSpawnActions
+    
+)
 
 @dataclass
 class Unit:
@@ -9,6 +33,7 @@ class Unit:
     team: str
     global_position: List[float]
     rotation: List[float]
+    actions: Optional[Any] = field(default=None, compare=False, init=False, repr=False)
 
     # This will hold all the 'UnitFields' parameters
     unit_fields: Dict[str, Any] = field(default_factory=dict)
@@ -27,9 +52,13 @@ class Unit:
             if hasattr(self, f):
                 val = getattr(self, f)
                 if val is not None:
+                    if f == 'carrier_spawns' and isinstance(val, dict):
+                        # Format dict {bay_idx: unit_id} into "idx:uid;idx:uid;" string
+                        formatted_spawns = "".join([f"{bay_idx}:{unit_id};" for bay_idx, unit_id in val.items()])
+                        self.unit_fields[f] = formatted_spawns
                     # Format lists as semi-colon separated strings for .vts
                     if isinstance(val, list):
-                        self.unit_fields[f] = ";".join(val) + ";"
+                        self.unit_fields[f] = ";".join(map(str, val)) + ";"
                     else:
                         self.unit_fields[f] = val
                     
@@ -217,6 +246,7 @@ class AILockingRadarSpawn(GroundUnitSpawn):
 class AICarrierSpawn(AISeaUnitSpawn):
     """Dataclass for unit AICarrierSpawn"""
     lso_freq: Optional[float] = None
+    carrier_spawns: Optional[Dict[int, int]] = None
     # (C#: LSO Frequency - float)
 
 
@@ -411,7 +441,8 @@ field_names.update({
     ],
     "AILockingRadarSpawn": [],
     "AICarrierSpawn": [
-        "lso_freq"
+        "lso_freq",
+        "carrier_spawns"
     ],
     "ArtilleryUnitSpawn": [],
     "MultiplayerSpawn": [
@@ -562,62 +593,101 @@ ID_TO_CLASS = {
 
 }
 
-def create_unit(
-    # Base args are defined in the template
+UNIT_CLASS_TO_ACTION_CLASS = {
+    # --- Base AI Classes ---
+    AIUnitSpawn: AIUnitSpawnActions,
+    AIUnitSpawnEquippable: AIUnitSpawnEquippableActions,
 
+    # --- Aircraft Hierarchy ---
+    AIAircraftSpawn: AIAircraftSpawnActions,
+    AIAWACSSpawn: AIAWACSSpawnActions,
+    AIAirTankerSpawn: AIAirTankerSpawnActions,
+
+    # --- Ground Unit Hierarchy ---
+    GroundUnitSpawn: GroundUnitSpawnActions,
+    AIFixedSAMSpawn: AIFixedSAMSpawnActions,
+    AIGroundECMSpawn: AIGroundECMSpawnActions,
+    AIJTACSpawn: AIJTACSpawnActions,
+    AILockingRadarSpawn: AILockingRadarSpawnActions,
+    ArtilleryUnitSpawn: ArtilleryUnitSpawnActions,
+    APCUnitSpawn: APCUnitSpawnActions,
+    IFVSpawn: IFVSpawnActions,
+    # Note: AIGroundMWSSpawn and RocketArtilleryUnitSpawn will inherit actions
+    # from their parents (GroundUnitSpawn and ArtilleryUnitSpawn respectively)
+    # as they don't have specific action classes listed in the imports.
+
+    # --- Sea Unit Hierarchy ---
+    AISeaUnitSpawn: AISeaUnitSpawnActions,
+    AICarrierSpawn: AICarrierSpawnActions,
+    AIDroneCarrierSpawn: AIDroneCarrierSpawnActions,
+
+    # --- Other AI Units ---
+    AIDecoyLauncherSpawn: AIDecoyLauncherSpawnActions,
+    AIDecoyRadarSpawn: AIDecoyRadarSpawnActions,
+    AIMissileSilo: AIMissileSiloActions,
+
+    # --- Player/Multiplayer ---
+    PlayerSpawn: PlayerSpawnActions,
+    MultiplayerSpawn: MultiplayerSpawnActions,
+
+    # Note: RearmingUnitSpawn does not have a specific action class
+}
+
+def create_unit(
     id_name: str,
     unit_name: str,
     team: str,
     global_position: List[float],
     rotation: List[float],
-
     **kwargs
 ) -> "Unit":
     """
-
     Factory function to create a new unit instance.
     This is the recommended way to add units to your mission.
-    
+
     Args:
         id_name (str): The prefab ID of the unit (e.g., "fa-26b_ai").
         unit_name (str): The in-game display name for the unit.
         team (str): "Allied" or "Enemy".
         global_position (List[float]): A list of [x, y, z] coordinates.
+                                      May be adjusted by Mission.add_unit based on placement.
         rotation (List[float]): A list of [x, y, z] euler angles.
+                                May be adjusted by Mission.add_unit based on placement.
         **kwargs: Any additional unit-specific parameters (e.g., path="my_path").
-    
+
     Returns:
         A Unit subclass instance with all parameters set.
-
+        The 'actions' attribute will be None initially; it's set by Mission.add_unit.
     """
-    id_name_str = str(id_name) # Ensure it's a string for lookup
+    id_name_str = str(id_name)
     if id_name_str not in ID_TO_CLASS:
         raise KeyError(f"Unit ID '{id_name_str}' not found in database.")
-    
+
     ClassToCreate = ID_TO_CLASS[id_name_str]
-    
-    # Get all allowed field names for this class and its parents
+
+    # Get allowed field names (no changes needed here)
     allowed_field_names = set()
     cls_to_check = ClassToCreate
     while cls_to_check is not Unit:
         allowed_field_names.update(field_names.get(cls_to_check.__name__, []))
-        if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object:
-            break
+        if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object: break
         cls_to_check = cls_to_check.__mro__[1]
 
-    # Validate kwargs
+    # Validate kwargs (no changes needed here)
     for kwarg in kwargs:
         if kwarg not in allowed_field_names:
-            raise TypeError(f"'{kwarg}' is not a valid parameter for Unit '{id_name_str}' (class '{ClassToCreate.__name__}').")
+            raise TypeError(f"'{kwarg}' is not a valid parameter for Unit '{id_name_str}'.")
 
+    # Base args (no changes needed here)
     base_args = {
-
-        "unit_id": id_name,
-        "unit_name": unit_name,
-        "team": team,
-        "global_position": global_position,
-        "rotation": rotation,
-
+        "unit_id": id_name, "unit_name": unit_name, "team": team,
+        "global_position": global_position, "rotation": rotation,
     }
-    
-    return cast("Unit", ClassToCreate(**base_args, **kwargs))
+
+    # Create the instance (no changes needed here)
+    unit_instance = ClassToCreate(**base_args, **kwargs)
+
+    # --- Action attachment REMOVED from here ---
+    # It will be handled in Mission.add_unit after the unitInstanceID is known.
+
+    return cast("Unit", unit_instance)

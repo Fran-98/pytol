@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Dict, Any, cast, Literal
 
-from .mission_objects import EventTarget, ParamInfo
+from .mission_objects import EventTarget, ParamInfo, GlobalValue
 
 
 # This file contains helper classes to generate EventTarget objects
@@ -2706,3 +2706,65 @@ class RocketArtilleryUnitSpawnActions:
         return EventTarget(target_type=self.target_type, target_id=self.target_id, event_name="Spawn Unit")
 
 
+class GlobalValueActions:
+    """
+    Helper class to generate EventTarget objects for manipulating GlobalValues.
+
+    Note: The 'target_id' should be the *name* (string) of the GlobalValue.
+    """
+    def __init__(self, target_id: str):
+        if not isinstance(target_id, str):
+            raise TypeError("target_id for GlobalValueActions must be the string name of the GlobalValue.")
+        self.target_id = target_id
+        self.target_type = "GlobalValue" # VTS targetType for global values
+
+    def set_value(self, value: Union[int, float]) -> EventTarget:
+        """Sets the global value to a specific amount."""
+        params = [ParamInfo(name="value", type="System.Single", value=value)] # Assuming float/int uses System.Single
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Set Value", method_name="SetValue", params=params)
+
+    def increment_value(self) -> EventTarget:
+        """Adds 1 to the global value (increment)."""
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Increment Value", method_name="IncrementValue") # No params needed
+
+    def decrement_value(self) -> EventTarget:
+        """Subtracts 1 from the global value (decrement)."""
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Decrement Value", method_name="DecrementValue") # No params needed
+
+    def reset_value(self) -> EventTarget:
+        """Resets the global value to its initial value."""
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Reset Value", method_name="ResetValue") # No params needed
+
+    def multiply_value(self, value: Union[int, float]) -> EventTarget:
+        """Multiplies the global value by a specific amount."""
+        params = [ParamInfo(name="value", type="System.Single", value=value)]
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Multiply Value", method_name="MultiplyValue", params=params)
+
+    def copy_value(self, source_gv_name: str) -> EventTarget:
+        """Copies the value from another global value into this one."""
+        params = [ParamInfo(name="sourceValue", type="GlobalValue", value=source_gv_name)]
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Copy Value", method_name="CopyValue", params=params)
+
+    def add_values(self, source_gv_name: str) -> EventTarget:
+        """Adds the value of another global value to this one."""
+        params = [ParamInfo(name="sourceValue", type="GlobalValue", value=source_gv_name)]
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Add Values", method_name="AddValues", params=params)
+
+    def subtract_values(self, source_gv_name: str) -> EventTarget:
+        """Subtracts the value of another global value from this one."""
+        params = [ParamInfo(name="sourceValue", type="GlobalValue", value=source_gv_name)]
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Subtract Values", method_name="SubtractValues", params=params)
+
+    def multiply_values(self, source_gv_name: str) -> EventTarget:
+        """Multiplies this global value by the value of another global value."""
+        params = [ParamInfo(name="sourceValue", type="GlobalValue", value=source_gv_name)]
+        return EventTarget(target_type=self.target_type, target_id=self.target_id,
+                           event_name="Multiply Values", method_name="MultiplyValues", params=params)

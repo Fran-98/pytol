@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from typing import List, Optional, Union, Dict, Any, cast, Literal
-from ..classes.mission_objects import Waypoint
+from ..classes.mission_objects import Waypoint, EventTarget
 @dataclass
 class Objective:
     """Base class for all mission objectives."""
@@ -14,7 +14,9 @@ class Objective:
     auto_set_waypoint: bool = True
     orderID: int = 0
     completionReward: int = 0
-    # This will hold all the objective 'fields'
+    start_event_targets: List[EventTarget] = field(default_factory=list) # <-- ADD
+    fail_event_targets: List[EventTarget] = field(default_factory=list)  # <-- ADD
+    complete_event_targets: List[EventTarget] = field(default_factory=list) # <-- ADD
     fields: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -31,7 +33,12 @@ class Objective:
             if hasattr(self, f):
                 val = getattr(self, f)
                 if val is not None:
-                    self.fields[f] = val
+                    if f == 'targets' and isinstance(val, list):
+                        # Format list [id1, id2] into "id1;id2;" string
+                        formatted_targets = ";".join(map(str, val)) + ";"
+                        self.fields[f] = formatted_targets
+                    else: # Default handling for other fields
+                        self.fields[f] = val
                     delattr(self, f)
 
 # This helper dict stores the field names for each class,

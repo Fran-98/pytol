@@ -406,7 +406,7 @@ class TerrainCalculator:
 
             highest_spawnable_city_y = -float('inf'); best_city_surface_name = "City Block"
             for s in layout_info['surfaces']:
-                b = s.get('bounds_rel_layout',[]);
+                b = s.get('bounds_rel_layout',[])
                 if len(b)!=6: continue
                 min_r, max_r = np.array([b[0],b[2],b[4]]), np.array([b[1],b[3],b[5]])
                 corners_r = [np.array([dx,dy,dz]) for dx in [min_r[0],max_r[0]] for dy in [min_r[1],max_r[1]] for dz in [min_r[2],max_r[2]]]

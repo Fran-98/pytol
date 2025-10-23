@@ -22,7 +22,7 @@ This enables automation in mission creation, allowing for more dynamic and compl
   <br>
   ⚠️ <strong>Disclaimer</strong> ⚠️
   <br><br>
-  <em>This library is a work in progress, some features will not work as intended yet. Read the Known Issues section.</em>
+  <em>This library is a work in progress, some features will not work as intended yet. Reading the Known Issues section is recommended.</em>
   <br>
 </h3>
 
@@ -302,8 +302,19 @@ If you'd like to support the project financially, you can help cover development
 ## Known Issues
 
 - Terrain around airbases need to be adjusted as they deform terrain. Will be implemented soon
-- Need to pay attention to the terrain around cities as some city blocks deform terrain. Similar problem as airbases
+- Need to pay attention to the terrain around cities as some city blocks deform terrain. Similar problem as airbases.
+- Pytol need to get bases from the map data, have to put them manually.
 
+### Not issues but pending
+- Add static prefab to mission.
+- Handle the complex events and objectives system.
+- Support weather presets.
+- Support OBJECTIVES_OPFOR.
+- Support campaings.
+- Support multiplayer missions (after supporting campaings as they are the only way to generate MP missions).
+- Support to add imgs and that kind of stuff to the briefing.
+- Support to higher level implementation of things like mission templates and auto mission generation.
+- Support to replay reading. (will be useful to make stateful campaings or a campaing engine)
 -----
 ## License
 
