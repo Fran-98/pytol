@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import List, Optional, cast, Literal
+from dataclasses import dataclass, field, fields
+from typing import List, Optional, cast, Literal, Dict
 
 
 @dataclass(unsafe_hash=True)
@@ -11,9 +11,28 @@ class Conditional:
     """
     pass
 
+
+@dataclass
+class ConditionalTree:
+    """
+    Represents a complete conditional tree with multiple COMP blocks.
+    This allows creating complex conditionals with logical operators (And/Or)
+    that reference other conditionals by their comp_id.
+    """
+    components: Dict[int, Conditional] = field(default_factory=dict)  # comp_id -> Conditional
+    root: int = 0  # The comp_id of the root component
+    
+    def add_comp(self, comp_id: int, conditional: Conditional):
+        """Add a conditional component with a specific ID."""
+        self.components[comp_id] = conditional
+    
+    def set_root(self, comp_id: int):
+        """Set which component is the root of the tree."""
+        self.root = comp_id
+
 @dataclass(unsafe_hash=True)
 class Sccand(Conditional):
-    factors: Optional[List[str]] = None
+    factors: Optional[List[int]] = None
 
 
 @dataclass(unsafe_hash=True)
@@ -45,7 +64,7 @@ class Sccmpteamstats(Conditional):
 
 @dataclass(unsafe_hash=True)
 class Sccor(Conditional):
-    factors: Optional[List[str]] = None
+    factors: Optional[List[int]] = None
 
 
 @dataclass(unsafe_hash=True)
@@ -149,7 +168,7 @@ def create_conditional(
     ClassToCreate = ID_TO_CLASS[type_name]
     
     # Validate kwargs
-    allowed_fields = [f.name for f in ClassToCreate.__dataclass_fields__]
+    allowed_fields = [f.name for f in fields(ClassToCreate)]
     for kwarg in kwargs:
         if kwarg not in allowed_fields:
             raise TypeError(f"'{kwarg}' is not a valid parameter for Conditional '{type_name}'.")

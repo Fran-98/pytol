@@ -39,32 +39,65 @@ class Unit:
     unit_fields: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        """Called after __init__ to populate unit_fields from child attributes."""
-        all_field_names = set()
+        """
+        Called after standard dataclass __init__.
+        Moves subclass-specific fields (from field_names dict) AND common fields
+        into the self.unit_fields dictionary for VTS formatting, applying
+        special formatting where needed. Base Unit fields are left untouched.
+        """
+        subclass_field_names = set()
         cls_to_check = self.__class__
-        while cls_to_check is not Unit: # Iterate up the inheritance chain
-            all_field_names.update(field_names.get(cls_to_check.__name__, []))
+        while cls_to_check is not Unit and cls_to_check is not object:
+            subclass_field_names.update(field_names.get(cls_to_check.__name__, []))
             if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object:
                 break
-            cls_to_check = cls_to_check.__mro__[1] # Get parent class
-        
-        for f in all_field_names:
-            if hasattr(self, f):
-                val = getattr(self, f)
-                if val is not None:
-                    if f == 'carrier_spawns' and isinstance(val, dict):
-                        # Format dict {bay_idx: unit_id} into "idx:uid;idx:uid;" string
-                        formatted_spawns = "".join([f"{bay_idx}:{unit_id};" for bay_idx, unit_id in val.items()])
-                        self.unit_fields[f] = formatted_spawns
-                    # Format lists as semi-colon separated strings for .vts
-                    if isinstance(val, list):
-                        self.unit_fields[f] = ";".join(map(str, val)) + ";"
-                    else:
-                        self.unit_fields[f] = val
-                    
-                    # We no longer need the top-level attribute
-                    delattr(self, f)
+            cls_to_check = cls_to_check.__mro__[1]
 
+        fields_to_delete = [] # Keep track of attributes to delete safely later
+
+        # --- Process Subclass-Specific Fields ---
+        for f_name in subclass_field_names:
+            if hasattr(self, f_name):
+                val = getattr(self, f_name)
+                if val is not None:
+                    # Apply special formatting if needed
+                    if f_name == 'carrier_spawns' and isinstance(val, dict):
+                        formatted_spawns = "".join([f"{bay_idx}:{unit_id};" for bay_idx, unit_id in val.items()])
+                        self.unit_fields[f_name] = formatted_spawns
+                    elif isinstance(val, list): # General list formatting
+                        # Convert all items to string before joining
+                        self.unit_fields[f_name] = ";".join(map(str, val)) + ";"
+                    else: # Default handling
+                        self.unit_fields[f_name] = val
+                    # Mark the original attribute for deletion
+                    fields_to_delete.append(f_name)
+
+        # --- ADDED: Process Common Fields Explicitly ---
+        common_fields_to_move = ["unitGroup", "equips"] # Add any other common fields here
+        for common_f_name in common_fields_to_move:
+             # Check if the field exists and hasn't already been processed as a subclass field
+             if hasattr(self, common_f_name) and common_f_name not in subclass_field_names:
+                  val = getattr(self, common_f_name)
+                  if val is not None:
+                       # Apply special formatting if needed (e.g., equips list)
+                       if common_f_name == 'equips' and isinstance(val, list):
+                            self.unit_fields[common_f_name] = ";".join(map(str, val)) + ";"
+                       else: # unitGroup is usually just string/null
+                            self.unit_fields[common_f_name] = val
+                       # Mark for deletion
+                       fields_to_delete.append(common_f_name)
+        # --- END ADDED SECTION ---
+
+        # Safely delete the original attributes after processing
+        for f_name in fields_to_delete:
+            try:
+                # Use pop to remove from unit_fields if it was supposed to be deleted
+                # This check ensures we don't delete base class fields accidentally
+                # if f_name in self.unit_fields:
+                delattr(self, f_name)
+            except AttributeError:
+                 print(f"Warning: Could not delete attribute '{f_name}' during __post_init__ for {self.__class__.__name__}.")
+    
 # This helper dict stores the field names for each class,
 # used by the base class's __post_init__
 field_names: Dict[str, List[str]] = {}

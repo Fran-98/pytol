@@ -1,6 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import List, Optional, Union, Dict, Any, cast, Literal
 from ..classes.mission_objects import Waypoint, EventTarget
+
 @dataclass
 class Objective:
     """Base class for all mission objectives."""
@@ -9,37 +10,54 @@ class Objective:
     info: str
     type: str # This is the ObjectiveTypes enum string (e.g., "Destroy")
     required: bool = True
-    waypoint: Optional[Waypoint] = None
-    prereqs: Optional[List[int]] = None
+    waypoint: Optional[Union[Waypoint, str, int]] = None # Allow object, str, or int
+    prereqs: Optional[List[Union['Objective', int]]] = None # Allow object or int
     auto_set_waypoint: bool = True
     orderID: int = 0
     completionReward: int = 0
-    start_event_targets: List[EventTarget] = field(default_factory=list) # <-- ADD
-    fail_event_targets: List[EventTarget] = field(default_factory=list)  # <-- ADD
-    complete_event_targets: List[EventTarget] = field(default_factory=list) # <-- ADD
+    start_mode: Optional[Literal["Immediate", "PreReqs", "Final"]] = None
+    start_event_targets: List[EventTarget] = field(default_factory=list)
+    fail_event_targets: List[EventTarget] = field(default_factory=list)
+    complete_event_targets: List[EventTarget] = field(default_factory=list)
     fields: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        """Called after __init__ to populate fields from child attributes."""
-        all_field_names = set()
-        cls_to_check = self.__class__
-        while cls_to_check is not Objective: # Iterate up the inheritance chain
-            all_field_names.update(field_names.get(cls_to_check.__name__, []))
-            if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object:
-                break
-            cls_to_check = cls_to_check.__mro__[1] # Get parent class
-        
-        for f in all_field_names:
-            if hasattr(self, f):
-                val = getattr(self, f)
+        """
+        Called after standard dataclass __init__.
+        Moves subclass-specific fields (defined in the 'field_names' dict)
+        into the self.fields dictionary for VTS formatting, applying
+        special formatting where needed (e.g., for 'targets' list).
+        Base Objective fields are left untouched.
+        """
+        # Get the specific class name (e.g., "VTOMFlyTo")
+        subclass_name = self.__class__.__name__
+
+        # Get the list of field names specific to this subclass from our helper dict
+        subclass_field_names = field_names.get(subclass_name, [])
+
+        # Process ONLY these subclass-specific fields
+        fields_to_delete = [] # Keep track of attributes to delete safely later
+        for f_name in subclass_field_names:
+            if hasattr(self, f_name):
+                val = getattr(self, f_name)
                 if val is not None:
-                    if f == 'targets' and isinstance(val, list):
-                        # Format list [id1, id2] into "id1;id2;" string
+                    # Apply special formatting if needed
+                    if f_name == 'targets' and isinstance(val, list):
+                        # Format list [id1, id2] into "id1;id2;" string for VTS
                         formatted_targets = ";".join(map(str, val)) + ";"
-                        self.fields[f] = formatted_targets
-                    else: # Default handling for other fields
-                        self.fields[f] = val
-                    delattr(self, f)
+                        self.fields[f_name] = formatted_targets
+                    else: # Default handling for other specific fields
+                        self.fields[f_name] = val
+                    # Mark the original attribute for deletion
+                    fields_to_delete.append(f_name)
+
+        # Safely delete the original attributes after processing
+        for f_name in fields_to_delete:
+            try:
+                delattr(self, f_name)
+            except AttributeError:
+                # Should not happen if hasattr was true, but added for safety
+                print(f"Warning: Could not delete attribute '{f_name}' during __post_init__ for {subclass_name}.")
 
 # This helper dict stores the field names for each class,
 # used by the base class's __post_init__
@@ -175,7 +193,11 @@ field_names.update({
         "targets",
         "fuel_level"
     ],
-    "VTObjectiveModule": [],
+    "VTObjectiveModule": [
+        # "start_event_targets",
+        # "fail_event_targets",
+        # "complete_event_targets"
+    ],
     "VTOMDefendUnit": [
         "target",
         "radius",
@@ -240,60 +262,63 @@ ID_TO_CLASS = {
 }
 
 def create_objective(
-    # Base args are defined in the template
-
-    id_name: str, # This is the 'ObjectiveTypes' enum string, e.g., "Destroy"
+    # --- Base args ---
+    id_name: str, # Objective type
     objective_id: int,
     name: str,
     info: str,
     required: bool = True,
-    waypoint: Optional[str] = None,
-    prereqs: Optional[List[int]] = None,
+    waypoint: Optional[Union[Waypoint, str, int]] = None,
+    prereqs: Optional[List[Union[Objective, int]]] = None,
     auto_set_waypoint: bool = True,
-
+    start_mode: Optional[Literal["Immediate", "PreReqs", "Final"]] = None,
+    start_event_targets: Optional[List[EventTarget]] = None,
+    fail_event_targets: Optional[List[EventTarget]] = None,
+    complete_event_targets: Optional[List[EventTarget]] = None,
+    # --- Objective specific fields ---
     **kwargs
 ) -> "Objective":
     """
-
     Factory function to create a new objective instance.
-    
-    Args:
-        id_name (str): The type of objective (e.g., "Destroy", "Fly_To").
-        objective_id (int): A unique integer ID for this objective.
-        name (str): The in-game display name for the objective.
-        info (str): The in-game description for the objective.
-        required (bool): Whether the objective is required for mission success.
-        waypoint (Optional[str]): The ID of a waypoint to associate with this.
-        prereqs (Optional[List[int]]): List of objective IDs that must be completed first.
-        auto_set_waypoint (bool): Automatically set the player's waypoint to this.
-        **kwargs: Any additional objective-specific parameters (e.g., trigger_radius=1000).
-    
-    Returns:
-        An Objective subclass instance with all parameters set.
-
+    Includes support for event target lists.
     """
     id_name_str = str(id_name) # Ensure it's a string for lookup
     if id_name_str not in ID_TO_CLASS:
         raise KeyError(f"Objective ID '{id_name_str}' not found in database.")
-    
+
     ClassToCreate = ID_TO_CLASS[id_name_str]
-    
-    # Get all allowed field names for this class and its parents
-    allowed_field_names = set()
-    cls_to_check = ClassToCreate
-    while cls_to_check is not Objective:
-        allowed_field_names.update(field_names.get(cls_to_check.__name__, []))
-        if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object:
-            break
-        cls_to_check = cls_to_check.__mro__[1]
 
-    # Validate kwargs
-    for kwarg in kwargs:
-        if kwarg not in allowed_field_names:
-            raise TypeError(f"'{kwarg}' is not a valid parameter for Objective '{id_name_str}' (class '{ClassToCreate.__name__}').")
+    # --- Validation Logic (Revised - separate base and specific fields) ---
+    base_fields_names = {f.name for f in fields(Objective)}
 
+    # Get names of fields specific to the target subclass using the field_names dict
+    specific_fields_names = set(field_names.get(ClassToCreate.__name__, []))
+
+    # Validate kwargs: they must either be a specific field or a base field
+    objective_specific_fields = {} # Dict to hold validated specific fields from kwargs
+    passed_kwargs_names = set(kwargs.keys())
+
+    # Check for invalid kwargs (not base, not specific for this class)
+    allowed_specific_kwargs = specific_fields_names # Kwargs should only contain specific fields
+    invalid_kwargs = passed_kwargs_names - allowed_specific_kwargs
+    if invalid_kwargs:
+        # Check if the invalid kwarg is actually a base field (which shouldn't be in kwargs)
+        actually_base_fields = invalid_kwargs.intersection(base_fields_names)
+        if actually_base_fields:
+             raise TypeError(f"Base objective field(s) '{actually_base_fields}' were passed as keyword arguments. Pass them as direct arguments.")
+        else:
+             # Truly invalid kwargs
+             raise TypeError(f"Invalid keyword argument(s) for Objective '{id_name_str}': {invalid_kwargs}. Allowed specific fields for {ClassToCreate.__name__}: {allowed_specific_kwargs}")
+
+    # Populate specific fields dict from valid kwargs
+    for field_name in allowed_specific_kwargs:
+        if field_name in kwargs:
+            objective_specific_fields[field_name] = kwargs[field_name]
+    # --- End Validation ---
+
+
+    # --- Base Args Dictionary (Includes event targets passed directly) ---
     base_args = {
-
         "type": id_name,
         "objective_id": objective_id,
         "name": name,
@@ -302,7 +327,36 @@ def create_objective(
         "waypoint": waypoint,
         "prereqs": prereqs,
         "auto_set_waypoint": auto_set_waypoint,
-
+        "start_mode": start_mode,
+        "start_event_targets": start_event_targets or [],
+        "fail_event_targets": fail_event_targets or [],
+        "complete_event_targets": complete_event_targets or [],
+        # orderID and completionReward use defaults from dataclass
     }
-    
-    return cast("Objective", ClassToCreate(**base_args, **kwargs))
+
+    # Combine base args and specific fields for instantiation
+    all_args = {**base_args, **objective_specific_fields}
+
+    # --- DEBUG: Try creating with all args ---
+    try:
+        print("--- DEBUG: Attempting creation with all_args ---")
+        instance = ClassToCreate(**all_args)
+        print(f"--- DEBUG: Creation successful. Instance has start_event_targets: {'start_event_targets' in dir(instance)}")
+
+        # --- Original Debug Prints ---
+        print(f"--- DEBUG: Final Objective Instance ---")
+        print(f"Instance Type: {type(instance)}")
+        # print(f"Instance Data: {instance}") # Comment this out for now if it still errors
+        print(f"Has 'start_event_targets'? {'start_event_targets' in dir(instance)}")
+        print(f"Value of 'start_event_targets': {getattr(instance, 'start_event_targets', 'ATTRIBUTE NOT FOUND')}")
+        print(f"Fields dict: {instance.fields}")
+        print(f"----------------------------------------")
+        # --- END DEBUG ---
+
+        return cast("Objective", instance)
+
+    except TypeError as e:
+        print(f"Error during instance creation in create_objective: {e}")
+        print(f"Class: {ClassToCreate.__name__}")
+        print(f"All Args Passed: {all_args}")
+        raise e

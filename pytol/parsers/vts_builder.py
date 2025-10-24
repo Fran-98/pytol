@@ -106,6 +106,7 @@ class Mission:
         self.campaign_order_idx = -1
         self.multiplayer = False
         self.allowed_equips = "gau-8;m230;h70-x7;h70-4x4;h70-x19;mk82x1;mk82x2;mk82x3;mk82HDx1;mk82HDx2;mk82HDx3;agm89x1;gbu38x1;gbu38x2;gbu38x3;gbu39x3;gbu39x4u;cbu97x1;hellfirex4;maverickx1;maverickx3;cagm-6;sidewinderx1;sidewinderx2;sidewinderx3;iris-t-x1;iris-t-x2;iris-t-x3;sidearmx1;sidearmx2;sidearmx3;marmx1;av42_gbu12x1;av42_gbu12x2;av42_gbu12x3;42c_aim9ex2;42c_aim9ex1;"
+        self.forced_equips = ";;;;;;;"  # Forced equipment slots (semicolon-separated)
         self.force_equips = False
         self.norm_forced_fuel = 1
         self.equips_configurable = True
@@ -170,6 +171,7 @@ class Mission:
         self._id_counters["ConditionalAction"] = 0
 
         self.event_sequences: List[EventSequence] = []
+        self.random_events: List[RandomEvent] = []
 
     def _get_or_assign_id(self, obj: Any, prefix: str, user_provided_id: Optional[Union[str, int]] = None) -> Union[str, int]:
         """
@@ -193,6 +195,8 @@ class Mission:
         obj_py_id = id(obj) # Use Python's unique object ID for mapping
 
         # --- Determine target map, list/dict, and ID type ---
+        from pytol.classes.conditionals import ConditionalTree
+        
         target_map = None
         target_list_or_dict = None
         id_type = "string" # Most are strings
@@ -207,7 +211,7 @@ class Mission:
             target_map = self._paths_map
             target_list_or_dict = self.paths
             obj_type_name = "Path"
-        elif isinstance(obj, Conditional):
+        elif isinstance(obj, (Conditional, ConditionalTree)):
             target_map = self._conditionals_map
             target_list_or_dict = self.conditionals # This is a dict
             obj_type_name = "Conditional"
@@ -340,7 +344,7 @@ class Mission:
             raise TypeError(f"unit_obj must be a Unit dataclass, not {type(unit_obj)}")
 
         # --- Unit Instance ID ---
-        uid = len(self.units)
+        uid = len(self.units) + 1  # Start IDs at 1 instead of 0
 
         # --- Attach Action Helper ---
         ActionClass = UNIT_CLASS_TO_ACTION_CLASS.get(type(unit_obj))
@@ -495,7 +499,8 @@ class Mission:
 
     def add_unit_to_group(self, team: str, group_name: str, unit_instance_id: int): # Unchanged
         """Assigns a unit (by its instance ID) to a unit group."""
-        team_upper = team.upper(); group = self.unit_groups.setdefault(team_upper, {})
+        team_upper = team.upper()
+        group = self.unit_groups.setdefault(team_upper, {})
         group.setdefault(group_name, []).append(unit_instance_id)
 
     def add_objective(self, objective_obj: Objective) -> int:
@@ -547,10 +552,12 @@ class Mission:
             print(f"Warning: Overwriting resource with ID {res_id}")
         self.resource_manifest[res_id] = path
 
-    def add_conditional(self, conditional_obj: Conditional, conditional_id: Optional[str] = None) -> str:
-        """Adds a Conditional object, assigning an ID if needed."""
-        if not isinstance(conditional_obj, Conditional):
-            raise TypeError("conditional_obj must be a Conditional dataclass.")
+    def add_conditional(self, conditional_obj, conditional_id: Optional[str] = None) -> str:
+        """Adds a Conditional object or ConditionalTree, assigning an ID if needed."""
+        from pytol.classes.conditionals import ConditionalTree
+        
+        if not isinstance(conditional_obj, (Conditional, ConditionalTree)):
+            raise TypeError("conditional_obj must be a Conditional dataclass or ConditionalTree.")
         assigned_id = self._get_or_assign_id(conditional_obj, "_pytol_cond", conditional_id)
         # Conditionals don't have an 'id' field in their dataclass
         print(f"Conditional added with ID '{assigned_id}'.")
@@ -616,21 +623,182 @@ class Mission:
         self.random_events.append(re_obj)
         print(f"RandomEvent '{re_obj.name}' added (ID: {re_obj.id}).")
 
-    def _format_conditional(self, cond_id: str, cond: Conditional) -> str: # Unchanged
-        """Formats a single Conditional dataclass into a VTS string."""
-        # ... (implementation remains the same, uses cond_id passed in) ...
-        eol = "\n"; indent = "\t\t"
-        cond_type = CLASS_TO_ID.get(cond.__class__)
-        if not cond_type: raise TypeError(f"Unknown conditional type: {cond.__class__.__name__}")
-        content_c = f"{indent}\tid = {cond_id}{eol}{indent}\ttype = {cond_type}{eol}"
-        if not is_dataclass(cond): return ""
-        for f in fields(cond):
-            value = getattr(cond, f.name); key_name = f.name
-            if value is None: continue
-            formatted_value = ";".join(map(str, value)) + ";" if isinstance(value, list) else _format_value(value)
-            content_c += f"{indent}\t{key_name} = {formatted_value}{eol}"
-        return f"{indent}Conditional{eol}{indent}{{{eol}{content_c}{indent}}}{eol}"
+    def _format_conditional(self, cond_id: str, cond) -> str:
+        """
+        Formats a Conditional or ConditionalTree dataclass into the nested VTS structure,
+        including editor position placeholders.
+        """
+        from pytol.classes.conditionals import ConditionalTree, Conditional
+        
+        # Check if this is a ConditionalTree (multiple COMPs)
+        if isinstance(cond, ConditionalTree):
+            return self._format_conditional_tree(cond_id, cond)
+        
+        eol = "\n"
+        indent_conditional = "\t\t" # Indent for CONDITIONAL block
+        indent_comp = "\t\t\t"     # Indent for COMP block contents
 
+        # Check if this is an empty base Conditional (no COMPs)
+        if cond.__class__ == Conditional:
+            # Empty conditional - just output the CONDITIONAL block with id and outputNodePos
+            return (f"{indent_conditional}CONDITIONAL{eol}"
+                   f"{indent_conditional}{{{eol}"
+                   f"{indent_comp}id = {cond_id}{eol}"
+                   f"{indent_comp}outputNodePos = (0, 0, 0){eol}"
+                   f"{indent_conditional}}}{eol}")
+
+        cond_type_str = CLASS_TO_ID.get(cond.__class__)
+        if not cond_type_str:
+            raise TypeError(f"Unknown conditional object type: {cond.__class__.__name__}")
+
+        # --- Build Inner COMP block content ---
+        comp_content_lines = []
+        comp_content_lines.append(f"{indent_comp}id = 0")
+        comp_content_lines.append(f"{indent_comp}type = {cond_type_str}")
+        comp_content_lines.append(f"{indent_comp}uiPos = (0, 0, 0)") # <-- ADDED uiPos
+
+        if not is_dataclass(cond):
+            print(f"Warning: Conditional object {cond_id} is not a dataclass.")
+        else:
+            for f in fields(cond):
+                if f.name == 'internal_id': continue # Skip internal fields if any
+                value = getattr(cond, f.name, None)
+                if value is None: continue
+
+                key_name_snake = f.name
+                # Special case: c_value should remain in snake_case in VTS format
+                if key_name_snake == 'c_value':
+                    key_name_final = key_name_snake
+                else:
+                    key_name_final = _snake_to_camel(key_name_snake)
+                formatted_value = ""
+
+                # Special handling for global value references - convert name to ID
+                if key_name_snake in ('gv', 'gv_a', 'gv_b') and isinstance(value, str):
+                    # Find the index of the global value with this name
+                    gv_id = -1  # Default to -1 if not found
+                    for idx, gv in enumerate(self.global_values.values()):
+                        if gv.name == value:
+                            gv_id = idx
+                            break
+                    formatted_value = str(gv_id)
+                elif isinstance(value, list):
+                    # Ensure correct semicolon list format
+                    formatted_value = ";".join(map(str, value)) + ";"
+                else:
+                    formatted_value = _format_value(value)
+
+                comp_content_lines.append(f"{indent_comp}{key_name_final} = {formatted_value}")
+
+        comp_content_str = eol.join(comp_content_lines) + eol
+        comp_block_str = _format_block("COMP", comp_content_str, 3)
+
+        # --- Build Outer CONDITIONAL block content ---
+        conditional_content_str = (
+            f"{indent_comp}id = {cond_id}{eol}"
+            f"{indent_comp}outputNodePos = (0, 0, 0){eol}" # <-- ADDED outputNodePos
+            f"{indent_comp}root = 0{eol}"
+            f"{comp_block_str}"
+        )
+
+        # Manually construct the outer block
+        return f"{indent_conditional}CONDITIONAL{eol}{indent_conditional}{{{eol}{conditional_content_str}{indent_conditional}}}{eol}"
+
+    def _format_conditional_tree(self, cond_id: str, tree) -> str:
+        """
+        Formats a ConditionalTree with multiple COMP blocks into a single CONDITIONAL block.
+        """
+        eol = "\n"
+        indent_conditional = "\t\t"
+        indent_comp = "\t\t\t"
+        
+        # Build all COMP blocks
+        comp_blocks = []
+        for comp_id in sorted(tree.components.keys()):
+            cond = tree.components[comp_id]
+            cond_type_str = CLASS_TO_ID.get(cond.__class__)
+            if not cond_type_str:
+                raise TypeError(f"Unknown conditional object type: {cond.__class__.__name__}")
+            
+            # Build COMP block content
+            comp_content_lines = []
+            comp_content_lines.append(f"{indent_comp}id = {comp_id}")
+            comp_content_lines.append(f"{indent_comp}type = {cond_type_str}")
+            comp_content_lines.append(f"{indent_comp}uiPos = (0, 0, 0)")
+            
+            if is_dataclass(cond):
+                # Collect all field outputs (except method_parameters which needs special handling)
+                regular_fields = []
+                method_params_block = None
+                
+                for f in fields(cond):
+                    if f.name == 'internal_id':
+                        continue
+                    value = getattr(cond, f.name, None)
+                    if value is None:
+                        continue
+                    
+                    key_name_snake = f.name
+                    # Special case: c_value should remain in snake_case in VTS format
+                    if key_name_snake == 'c_value':
+                        key_name_final = key_name_snake
+                    else:
+                        key_name_final = _snake_to_camel(key_name_snake)
+                    
+                    # Special handling for method_parameters - needs nested block structure
+                    # Store it separately to add AFTER isNot
+                    if key_name_snake == 'method_parameters' and isinstance(value, list):
+                        param_value = ";".join(map(str, value)) + ";"
+                        indent_param = "\t\t\t\t"
+                        method_params_block = (
+                            f"{indent_comp}{key_name_final}{eol}"
+                            f"{indent_comp}{{{eol}"
+                            f"{indent_param}value = {param_value}{eol}"
+                            f"{indent_comp}}}"
+                        )
+                        continue
+                    
+                    # Special handling for global value references
+                    formatted_value = ""
+                    if key_name_snake in ('gv', 'gv_a', 'gv_b') and isinstance(value, str):
+                        gv_id = -1
+                        for idx, gv in enumerate(self.global_values.values()):
+                            if gv.name == value:
+                                gv_id = idx
+                                break
+                        formatted_value = str(gv_id)
+                    elif isinstance(value, list):
+                        formatted_value = ";".join(map(str, value)) + ";"
+                    elif isinstance(value, str) and ';' in value and not value.endswith(';'):
+                        # String contains semicolons (semicolon-separated list) - ensure trailing semicolon
+                        formatted_value = value + ";"
+                    else:
+                        formatted_value = _format_value(value)
+                    
+                    regular_fields.append((key_name_snake, key_name_final, formatted_value))
+                
+                # Add regular fields first
+                for key_snake, key_final, formatted_val in regular_fields:
+                    comp_content_lines.append(f"{indent_comp}{key_final} = {formatted_val}")
+                
+                # Add methodParameters block AFTER other fields (especially after isNot)
+                if method_params_block:
+                    comp_content_lines.append(method_params_block)
+            
+            comp_content_str = eol.join(comp_content_lines) + eol
+            comp_block_str = _format_block("COMP", comp_content_str, 3)
+            comp_blocks.append(comp_block_str)
+        
+        # Build the CONDITIONAL block with all COMPs
+        all_comps_str = "".join(comp_blocks)
+        conditional_content_str = (
+            f"{indent_comp}id = {cond_id}{eol}"
+            f"{indent_comp}outputNodePos = (0, 0, 0){eol}"
+            f"{indent_comp}root = {tree.root}{eol}"
+            f"{all_comps_str}"
+        )
+        
+        return f"{indent_conditional}CONDITIONAL{eol}{indent_conditional}{{{eol}{conditional_content_str}{indent_conditional}}}{eol}"
 
     def _generate_content_string(self) -> Dict[str, str]:
         """Internal function to generate the content for all VTS blocks."""
@@ -640,12 +808,39 @@ class Mission:
         units_c = ""
         for u_data in self.units:
             u = u_data['unit_obj']
-            fields_c = "".join([f"\t\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}" for k,v in u.unit_fields.items()])
-
-            # Add spawnChance and spawnFlags lines
-            spawn_chance_line = f"\t\t\tspawnChance = {u_data.get('spawn_chance', 100)}{eol}"
-            spawn_flags_val = u_data.get('spawn_flags')
-            spawn_flags_line = f"\t\t\tspawnFlags = {spawn_flags_val if spawn_flags_val is not None else ''}{eol}" # Ensure empty string if None
+            
+            # Build unit fields with proper ordering
+            # Start with unitGroup first (if present), then other fields
+            fields_c = ""
+            if 'unit_group' in u.unit_fields:
+                fields_c += f"\t\t\t\tunitGroup = {u.unit_fields['unit_group']}{eol}"
+            
+            # Add behavior field
+            if 'behavior' in u.unit_fields:
+                fields_c += f"\t\t\t\tbehavior = {u.unit_fields['behavior']}{eol}"
+            
+            # Always include defaultPath and waypoint (even if null) for ground units
+            if 'default_path' in u.unit_fields:
+                fields_c += f"\t\t\t\tdefaultPath = {_format_value(u.unit_fields['default_path'])}{eol}"
+            elif 'behavior' in u.unit_fields:  # If it has behavior field, it's likely a ground unit
+                fields_c += f"\t\t\t\tdefaultPath = null{eol}"
+                
+            if 'waypoint' in u.unit_fields:
+                fields_c += f"\t\t\t\twaypoint = {_format_value(u.unit_fields['waypoint'])}{eol}"
+            elif 'behavior' in u.unit_fields:  # If it has behavior field, it's likely a ground unit
+                fields_c += f"\t\t\t\twaypoint = null{eol}"
+            
+            # Add remaining fields in specific order to match game editor output
+            skip_fields = {'unit_group', 'behavior', 'default_path', 'waypoint'}
+            # Order: engageEnemies, detectionMode, spawnOnStart, invincible, respawnable, receiveFriendlyDamage, then any others
+            ordered_field_names = ['engage_enemies', 'detection_mode', 'spawn_on_start', 'invincible', 'respawnable', 'receive_friendly_damage']
+            for field_name in ordered_field_names:
+                if field_name in u.unit_fields:
+                    fields_c += f"\t\t\t\t{_snake_to_camel(field_name)} = {_format_value(u.unit_fields[field_name])}{eol}"
+            # Add any remaining fields not in the ordered list
+            for k, v in u.unit_fields.items():
+                if k not in skip_fields and k not in ordered_field_names:
+                    fields_c += f"\t\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}"
 
             units_c += f"\t\tUnitSpawner{eol}\t\t{{{eol}" \
                     f"\t\t\tunitName = {u.unit_name}{eol}" \
@@ -653,9 +848,7 @@ class Mission:
                     f"\t\t\tunitInstanceID = {u_data['unitInstanceID']}{eol}" \
                     f"\t\t\tunitID = {u.unit_id}{eol}" \
                     f"\t\t\trotation = {_format_vector(u.rotation)}{eol}" \
-                    f"{spawn_chance_line}" \
                     f"\t\t\tlastValidPlacement = {_format_vector(u_data['lastValidPlacement'])}{eol}" \
-                    f"{spawn_flags_line}" \
                     f"\t\t\teditorPlacementMode = {u_data['editorPlacementMode']}{eol}" \
                     f"\t\t\tonCarrier = {u_data['onCarrier']}{eol}" \
                     f"\t\t\tmpSelectEnabled = {u_data['mpSelectEnabled']}{eol}" \
@@ -688,9 +881,16 @@ class Mission:
 
         # --- UNIT GROUPS --- (No ID changes needed)
         ug_c = ""
+
         for team, groups in self.unit_groups.items():
-            team_c = "".join([f"\t\t\t{name} = 2;{_format_id_list(ids)};{eol}" for name, ids in groups.items()])
-            ug_c += _format_block(team, team_c, 2)
+            team_upper = team.upper()
+            # Format unit group assignments without count prefix
+            team_c = "".join([f"\t\t\t{name} = 0;{_format_id_list(ids)};{eol}" for name, ids in groups.items()])
+            # Add SETTINGS blocks for each group
+            for name in groups.keys():
+                team_c += f"\t\t\t{name}_SETTINGS{eol}\t\t\t{{{eol}\t\t\t\tsyncAltSpawns = False{eol}\t\t\t}}{eol}"
+            if team_c:
+                ug_c += _format_block(team_upper, team_c, 2)
 
         # --- TRIGGER EVENTS --- (Handles potential object links)
         triggers_c = ""
@@ -706,31 +906,45 @@ class Mission:
                  else:
                       resolved_props[k] = v
 
-            props_c = "".join([f"\t\t\t{k} = {_format_value(v)}{eol}" for k, v in resolved_props.items()])
+            props_c = "".join([f"\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}" for k, v in resolved_props.items()])
 
-            targets_c = "" # EventTarget formatting remains the same
+            targets_c = "" # EventTarget formatting with altTargetIdx
             for target in t.event_targets:
-                params_c = "".join([
-                    f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}"
-                    f"\t\t\t\t\t\ttype = {p.type}{eol}"
-                    f"\t\t\t\t\t\tvalue = {_format_value(p.value)}{eol}" # Use format_value for param values
-                    f"\t\t\t\t\t\tname = {p.name}{eol}"
-                    f"\t\t\t\t\t}}{eol}" for p in target.params
-                ])
+                params_c = ""
+                for p in target.params:
+                    # Convert list values to semicolon format (e.g., [2] -> "2;")
+                    formatted_value = _format_id_list(p.value) + ";" if isinstance(p.value, list) else _format_value(p.value)
+                    params_c += (f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}"
+                                 f"\t\t\t\t\t\ttype = {p.type}{eol}"
+                                 f"\t\t\t\t\t\tvalue = {formatted_value}{eol}"
+                                 f"\t\t\t\t\t\tname = {p.name}{eol}"
+                                 f"\t\t\t\t\t}}{eol}")
                 targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
                             f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
                             f"\t\t\t\t\ttargetID = {target.target_id}{eol}" \
                             f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                            f"\t\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
+                            f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
+                            f"\t\t\t\t\taltTargetIdx = -1{eol}" \
                             f"{params_c}\t\t\t\t}}{eol}"
             event_info = _format_block('EventInfo', f"\t\t\t\teventName = {eol}{targets_c}", 3)
 
+            # Add ListOrderIndex and ListFolderName, use eventName instead of name
+            list_order_index = t.id * 10 if hasattr(t, 'id') else 0
+            
+            # Only include waypoint for Proximity triggers
+            waypoint_line = ""
+            if t.trigger_type == "Proximity":
+                waypoint_line = f"\t\t\twaypoint = null{eol}"
+            
             triggers_c += f"\t\tTriggerEvent{eol}\t\t{{{eol}" \
                         f"\t\t\tid = {t.id}{eol}" \
                         f"\t\t\tenabled = {t.enabled}{eol}" \
                         f"\t\t\ttriggerType = {t.trigger_type}{eol}" \
-                        f"\t\t\tname = {t.name}{eol}" \
-                        f"{props_c}{event_info}\t\t}}{eol}"
+                        f"\t\t\tListOrderIndex = {list_order_index}{eol}" \
+                        f"\t\t\tListFolderName = {eol}" \
+                        f"{waypoint_line}" \
+                        f"{props_c}\t\t\teventName = {t.name}{eol}" \
+                        f"{event_info}\t\t}}{eol}"
 
         # --- TIMED EVENT GROUPS ---
         teg_c = ""
@@ -751,9 +965,11 @@ class Mission:
 
                         # Handle special ParamAttrInfo block if necessary (VTS specific)
                         # For now, just format the basic ParamInfo
+                        # Convert list values to semicolon format (e.g., [2] -> "2;")
+                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
                         param_info_block = f"\t\t\t\t\t\tParamInfo{eol}\t\t\t\t\t\t{{{eol}" \
                                         f"\t\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                        f"\t\t\t\t\t\t\tvalue = {_format_value(param_value)}{eol}" \
+                                        f"\t\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
                                         f"\t\t\t\t\t\t\tname = {p.name}{eol}"
                         
                         if p.attr_info:
@@ -786,18 +1002,25 @@ class Mission:
                                 f"{params_c}\t\t\t\t\t}}{eol}"
 
                 # Format TimedEventInfo block
-                events_c += f"\t\t\t\tTimedEventInfo{eol}\t\t\t\t{{{eol}" \
-                            f"\t\t\t\t\teventName = {event_info.event_name}{eol}" \
-                            f"\t\t\t\t\ttime = {_format_value(event_info.time)}{eol}" \
-                            f"{targets_c}\t\t\t\t}}{eol}"
+                events_c += f"\t\t\tTimedEventInfo{eol}\t\t\t{{{eol}" \
+                            f"\t\t\t\teventName = {event_info.event_name}{eol}" \
+                            f"\t\t\t\ttime = {_format_value(event_info.time)}{eol}" \
+                            f"{targets_c}\t\t\t}}{eol}"
 
-            # Format TimedEventGroup block
+            # Format TimedEventGroup block with ListOrderIndex and ListFolderName
+            list_order_index = (group.group_id - 1) * 10 if hasattr(group, 'group_id') else 0
             teg_c += f"\t\tTimedEventGroup{eol}\t\t{{{eol}" \
                     f"\t\t\tgroupName = {group.group_name}{eol}" \
                     f"\t\t\tgroupID = {group.group_id}{eol}" \
                     f"\t\t\tbeginImmediately = {group.begin_immediately}{eol}" \
-                    f"\t\t\tinitialDelay = {_format_value(group.initial_delay)}{eol}" \
+                    f"\t\t\tinitialDelay = {int(group.initial_delay) if isinstance(group.initial_delay, (int, float)) else _format_value(group.initial_delay)}{eol}" \
+                    f"\t\t\tListOrderIndex = {list_order_index}{eol}" \
+                    f"\t\t\tListFolderName = {eol}" \
                     f"{events_c}\t\t}}{eol}"
+        
+        # Add FOLDER_DATA block if there are any timed event groups
+        if self.timed_event_groups:
+            teg_c += f"\t\tFOLDER_DATA{eol}\t\t{{{eol}\t\t}}{eol}"
         
         # --- OBJECTIVES --- (Handles potential object links)
         objectives_list = []
@@ -839,9 +1062,11 @@ class Mission:
                         # TODO: Add checks for Unit, Conditional, etc. if actions can target them via objects
 
                         # Format ParamInfo block (add ParamAttrInfo if present)
+                        # Convert list values to semicolon format (e.g., [2] -> "2;")
+                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
                         param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
                                            f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                           f"\t\t\t\t\t\tvalue = {_format_value(param_value)}{eol}" \
+                                           f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
                                            f"\t\t\t\t\t\tname = {p.name}{eol}"
                         if p.attr_info:
                              attr_type = p.attr_info.get('type')
@@ -877,9 +1102,9 @@ class Mission:
 
                 # Only create EventInfo content if there are targets
                 if targets_c:
-                    event_info_content = f"\t\t\t\teventName = {event_info_name}{eol}{targets_c}"
+                    event_info_content = f"\t\t\t\t\teventName = {event_info_name}{eol}{targets_c}"
                 else:
-                    event_info_content = f"\t\t\t\teventName = {event_info_name}{eol}" # Empty if no targets
+                    event_info_content = f"\t\t\t\t\teventName = {event_info_name}{eol}" # Empty if no targets
 
                 event_info_block = _format_block("EventInfo", event_info_content, 4)
                 return _format_block(event_block_name, event_info_block, 3)
@@ -889,6 +1114,37 @@ class Mission:
             fail_event_block = format_objective_event("failEvent", "Failed Event", o.fail_event_targets)
             complete_event_block = format_objective_event("completeEvent", "Completed Event", o.complete_event_targets)
 
+            if o.start_mode:
+                start_mode_str = o.start_mode
+            elif prereq_ids:
+                start_mode_str = 'PreReqs'
+            else:
+                start_mode_str = 'Immediate'
+
+            # Build fields block with successConditional and failConditional
+            fields_content = ""
+            
+            # For Conditional objectives, always include both conditionals (even if null)
+            if o.type == "Conditional":
+                success_cond = o.fields.get('successConditional') or o.fields.get('success_conditional')
+                fields_content += f"\t\t\t\tsuccessConditional = {_format_value(success_cond) if success_cond else 'null'}{eol}"
+                fail_cond = o.fields.get('failConditional') or o.fields.get('fail_conditional')
+                fields_content += f"\t\t\t\tfailConditional = {_format_value(fail_cond) if fail_cond else 'null'}{eol}"
+            else:
+                # For other objective types, only add if they exist
+                if 'successConditional' in o.fields or 'success_conditional' in o.fields:
+                    success_cond = o.fields.get('successConditional') or o.fields.get('success_conditional')
+                    fields_content += f"\t\t\t\tsuccessConditional = {_format_value(success_cond)}{eol}"
+                if 'failConditional' in o.fields or 'fail_conditional' in o.fields:
+                    fail_cond = o.fields.get('failConditional') or o.fields.get('fail_conditional')
+                    fields_content += f"\t\t\t\tfailConditional = {_format_value(fail_cond)}{eol}"
+            
+            # Add any other custom fields
+            for k, v in o.fields.items():
+                if k not in ['successConditional', 'success_conditional', 'failConditional', 'fail_conditional']:
+                    fields_content += f"\t\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}"
+            fields_block = _format_block('fields', fields_content, 3)
+
             obj_str = f"\t\tObjective{eol}\t\t{{{eol}" \
                     f"\t\t\tobjectiveName = {o.name}{eol}" \
                     f"\t\t\tobjectiveInfo = {o.info}{eol}" \
@@ -896,14 +1152,13 @@ class Mission:
                     f"\t\t\torderID = {o.orderID}{eol}" \
                     f"\t\t\trequired = {o.required}{eol}" \
                     f"\t\t\tcompletionReward = {o.completionReward}{eol}" \
-                    f"\t\t\twaypoint = {waypoint_id}{eol}" \
+                    f"\t\t\twaypoint = null{eol}" \
                     f"\t\t\tautoSetWaypoint = {o.auto_set_waypoint}{eol}" \
-                    f"\t\t\tstartMode = {'PreReqs' if prereq_ids else 'Immediate'}{eol}" \
+                    f"\t\t\tstartMode = {start_mode_str}{eol}" \
                     f"\t\t\tobjectiveType = {o.type}{eol}" \
                     f"{start_event_block}" \
                     f"{fail_event_block}" \
                     f"{complete_event_block}" \
-                    f"\t\t\tpreReqObjectives = {_format_id_list(prereq_ids)};{eol}" \
                     f"{fields_block}" \
                     f"\t\t}}{eol}"
             objectives_list.append(obj_str)
@@ -949,11 +1204,21 @@ class Mission:
 
         # --- GLOBAL VALUES ---
         gv_c = ""
-        for name, gv in self.global_values.items():
-            gv_c += f"\t\tGlobalValue{eol}\t\t{{{eol}" \
-                    f"\t\t\tname = {gv.name}{eol}" \
-                    f"\t\t\tinitialValue = {_format_value(gv.initial_value)}{eol}" \
+        # Use enumerate to get an index 'i' which serves as the integer ID
+        for i, (name, gv) in enumerate(self.global_values.items()):
+            # Construct the 'data' string: ID;Name;;InitialValue;
+            gv_data_str = f"{i};{gv.name};;{_format_value(gv.initial_value)};"
+            list_order_index = i * 10
+            # Format the 'gv' block using the data string with ListOrderIndex and ListFolderName
+            gv_c += f"\t\tgv{eol}\t\t{{{eol}" \
+                    f"\t\t\tdata = {gv_data_str}{eol}" \
+                    f"\t\t\tListOrderIndex = {list_order_index}{eol}" \
+                    f"\t\t\tListFolderName = {eol}" \
                     f"\t\t}}{eol}"
+        
+        # Add FOLDER_DATA block if there are any global values
+        if self.global_values:
+            gv_c += f"\t\tFOLDER_DATA{eol}\t\t{{{eol}\t\t}}{eol}"
 
         # --- CONDITIONAL ACTIONS ---
         ca_c = ""
@@ -981,9 +1246,11 @@ class Mission:
                     # TODO: Add checks for Conditional, etc. if actions can use them as param values
 
                     # --- Format ParamInfo block (with ParamAttrInfo) ---
+                    # Convert list values to semicolon format (e.g., [2] -> "2;")
+                    formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
                     param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
                                        f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                       f"\t\t\t\t\t\tvalue = {_format_value(param_value)}{eol}" \
+                                       f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
                                        f"\t\t\t\t\t\tname = {p.name}{eol}"
                     if p.attr_info:
                          attr_type = p.attr_info.get('type')
@@ -1084,9 +1351,11 @@ class Mission:
                             if found_id is not None: param_value = found_id
                             else: print(f"Warning: Could not find unitInstanceID for Unit param value in RandomEvent {re.id}, Action {action.id}")
                         # Format ParamInfo (with ParamAttrInfo)
+                        # Convert list values to semicolon format (e.g., [2] -> "2;")
+                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
                         param_info_block = f"\t\t\t\t\t\tParamInfo{eol}\t\t\t\t\t\t{{{eol}" \
                                            f"\t\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                           f"\t\t\t\t\t\t\tvalue = {_format_value(param_value)}{eol}" \
+                                           f"\t\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
                                            f"\t\t\t\t\t\t\tname = {p.name}{eol}"
                         if p.attr_info:
                              attr_type = p.attr_info.get('type'); attr_data = p.attr_info.get('data')
@@ -1120,11 +1389,12 @@ class Mission:
                                 f"\t\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
                                 f"\t\t\t\t\t\teventName = {target.event_name}{eol}" \
                                 f"\t\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
+                                f"\t\t\t\t\t\taltTargetIdx = -1{eol}" \
                                 f"{params_c}\t\t\t\t\t}}{eol}"
 
                 # Format the EVENT_INFO block for this ACTION
                 event_info_content = f"\t\t\t\t\teventName = {eol}{targets_c}"
-                event_info_block = _format_block("EVENT_INFO", event_info_content, 5) # Indent 5
+                event_info_block = _format_block("EVENT_INFO", event_info_content, 4) # Indent 4 (not 5!)
 
                 # Resolve the ACTION's conditional link
                 action_cond_id_val_str = "0" # Default is "0"
@@ -1138,12 +1408,13 @@ class Mission:
                      else: # Allow integer 0
                           try: action_cond_id_val_str = str(int(action.conditional))
                           except ValueError: print(f"Warning: Invalid conditional link '{action.conditional}' in RandomEvent Action.")
-                # Format the nested CONDITIONAL block (using ID 0 as per example)
-                # TODO: This assumes the internal conditional structure is simple; might need adjustment
-                conditional_block_inner = f"\t\t\t\t\tCONDITIONAL{eol}\t\t\t\t\t{{{eol}" \
-                                          f"\t\t\t\t\t\tid = {action_cond_id_val_str}{eol}" \
-                                          f"\t\t\t\t\t\toutputNodePos = (0, 0, 0){eol}" \
-                                          f"\t\t\t\t\t}}{eol}"
+                
+                # Format the nested CONDITIONAL block inside ACTION
+                # This is always just a placeholder with id = 0 and no COMP blocks
+                conditional_block_inner = f"\t\t\t\tCONDITIONAL{eol}\t\t\t\t{{{eol}" \
+                                          f"\t\t\t\t\tid = 0{eol}" \
+                                          f"\t\t\t\t\toutputNodePos = (0, 0, 0){eol}" \
+                                          f"\t\t\t\t}}{eol}"
 
 
                 # Format the ACTION block
@@ -1156,7 +1427,7 @@ class Mission:
                     f"{conditional_block_inner}" # Include the nested conditional block
                     f"{event_info_block}"        # Include the nested event info block
                 )
-                actions_c += _format_block("ACTION", action_block_content, 4) # Indent 4
+                actions_c += _format_block("ACTION", action_block_content, 3) # Indent 3 (not 4!)
 
             # Format the outer RANDOM_EVENT block
             re_c += f"\t\tRANDOM_EVENT{eol}\t\t{{{eol}" \
@@ -1184,9 +1455,11 @@ class Mission:
                             if found_id is not None: param_value = found_id
                             else: print(f"Warning: Could not find unitInstanceID for Unit param value in EventSequence {seq.id}")
                         # Format ParamInfo (with ParamAttrInfo)
+                        # Convert list values to semicolon format (e.g., [2] -> "2;")
+                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
                         param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
                                            f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                           f"\t\t\t\t\t\tvalue = {_format_value(param_value)}{eol}" \
+                                           f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
                                            f"\t\t\t\t\t\tname = {p.name}{eol}"
                         if p.attr_info: # Add ParamAttrInfo formatting
                              attr_type = p.attr_info.get('type'); attr_data = p.attr_info.get('data')
@@ -1208,7 +1481,7 @@ class Mission:
                                 f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
                                 f"{params_c}\t\t\t\t}}{eol}"
                 # Format EventInfo block
-                event_info_content = f"\t\t\t\teventName = {eol}{targets_c}"
+                event_info_content = f"\t\t\t\t\teventName = {eol}{targets_c}"
                 event_info_block = _format_block("EventInfo", event_info_content, 4)
                 # Resolve conditional link
                 cond_id_val_str = "0"
@@ -1230,26 +1503,9 @@ class Mission:
                     f"\t\t\tsequenceName = {seq.sequence_name}{eol}" \
                     f"\t\t\tstartImmediately = {seq.start_immediately}{eol}" \
                     f"\t\t\twhileLoop = {seq.while_loop}{eol}" \
+                    f"\t\t\tListOrderIndex = {seq.id * 10}{eol}" \
+                    f"\t\t\tListFolderName = {eol}" \
                     f"{events_c}\t\t}}{eol}"
-
-        # --- GLOBAL VALUES ---
-        gv_c = ""
-        for name, gv in self.global_values.items():
-            # Example VTS uses 'gv { data = id;name;;value; }' format
-            # This seems editor specific. Let's try a simpler format first.
-            # TODO: Verify correct GlobalValue block format if this doesn't work.
-            gv_c += f"\t\tGlobalValue{eol}\t\t{{{eol}" \
-                    f"\t\t\tname = {gv.name}{eol}" \
-                    f"\t\t\tinitialValue = {_format_value(gv.initial_value)}{eol}" \
-                    f"\t\t}}{eol}"
-            # Alternate format based on example1.vts 'gv { data = ... }'
-            # gv_id = list(self.global_values.keys()).index(name) # Get index as ID
-            # gv_data = f"{gv_id};{gv.name};;{_format_value(gv.initial_value)};"
-            # gv_c += f"\t\tgv{eol}\t\t{{{eol}" \
-            #         f"\t\t\tdata = {gv_data}{eol}" \
-            #         # Ignoring ListOrderIndex, ListFolderName
-            #         f"\t\t}}{eol}"
-
 
         # --- BRIEFING ---
         briefing_c = "".join([
@@ -1266,12 +1522,22 @@ class Mission:
 
         # --- Return final dictionary ---
         return {
-            "UNITS": units_c, "PATHS": paths_c, "WAYPOINTS": wpts_c, "UNITGROUPS": ug_c,
-            "TRIGGER_EVENTS": triggers_c, "OBJECTIVES": objs_c, "StaticObjects": statics_c,
-            "BASES": bases_c,"Conditionals": conditionals_c, "ConditionalActions": ca_c,
-            "RandomEvents": re_c, "EventSequences": es_c, "GlobalValues": gv_c,
-            "Briefing": briefing_c, "ResourceManifest": resources_c,
-            "TimedEventGroups": teg_c
+            "UNITS": units_c,
+            "PATHS": paths_c,
+            "WAYPOINTS": wpts_c,
+            "UNITGROUPS": ug_c,             
+            "TRIGGER_EVENTS": triggers_c,
+            "OBJECTIVES": objs_c,
+            "StaticObjects": statics_c,
+            "BASES": bases_c,                
+            "Conditionals": conditionals_c,  
+            "ConditionalActions": ca_c,    
+            "RandomEvents": re_c,          
+            "EventSequences": es_c,        
+            "GlobalValues": gv_c,          
+            "Briefing": briefing_c,        
+            "ResourceManifest": resources_c, 
+            "TimedEventGroups": teg_c      
         }
         
 
@@ -1293,6 +1559,7 @@ class Mission:
             f"\tvehicle = {self.vehicle}",
             f"\tmultiplayer = {self.multiplayer}",
             f"\tallowedEquips = {self.allowed_equips}",
+            f"\tforcedEquips = {self.forced_equips}",
             f"\tforceEquips = {self.force_equips}",
             f"\tnormForcedFuel = {self.norm_forced_fuel}",
             f"\tequipsConfigurable = {self.equips_configurable}",
@@ -1327,18 +1594,18 @@ class Mission:
         vts += _format_block("UNITS", c["UNITS"])
         vts += _format_block("PATHS", c["PATHS"])
         vts += _format_block("WAYPOINTS", c["WAYPOINTS"])
-        vts += _format_block("UNITGROUPS", c["UNITGROUPS"])
-        vts += _format_block("TimedEventGroups", c["TimedEventGroups"])
+        vts += _format_block("UNITGROUPS", c["UNITGROUPS"])           
+        vts += _format_block("TimedEventGroups", c["TimedEventGroups"]) 
         vts += _format_block("TRIGGER_EVENTS", c["TRIGGER_EVENTS"])
         vts += _format_block("OBJECTIVES", c["OBJECTIVES"])
         vts += _format_block("OBJECTIVES_OPFOR", "") # TODO
         vts += _format_block("StaticObjects", c["StaticObjects"])
-        vts += _format_block("Conditionals", c["Conditionals"])
-        vts += _format_block("ConditionalActions", "")
-        vts += _format_block("RandomEvents", "")
-        vts += _format_block("EventSequences", "")
-        vts += _format_block("BASES", c["BASES"])
-        vts += _format_block("GlobalValues", "")
+        vts += _format_block("Conditionals", c["Conditionals"])       
+        vts += _format_block("ConditionalActions", c["ConditionalActions"]) 
+        vts += _format_block("RandomEvents", c["RandomEvents"])         
+        vts += _format_block("EventSequences", c["EventSequences"])     
+        vts += _format_block("BASES", c["BASES"])                  
+        vts += _format_block("GlobalValues", c["GlobalValues"])         
         vts += _format_block("Briefing", c["Briefing"])
 
         if c["ResourceManifest"]:

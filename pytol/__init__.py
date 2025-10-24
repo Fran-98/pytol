@@ -19,9 +19,19 @@ from .classes.mission_objects import (
     TimedEventGroup,
     TimedEventInfo,
     EventTarget,
-    ParamInfo 
+    ParamInfo,
+    GlobalValue,
+    ConditionalAction,
+    RandomEvent,
+    RandomEventAction,
+    EventSequence,
+    SequenceEvent,
+    Conditional
 )
 
+from .classes.conditionals import ConditionalTree
+
+# --- Terrain Helpers ---
 from .terrain.terrain_calculator import TerrainCalculator
 from .terrain.mission_terrain_helper import MissionTerrainHelper
 
