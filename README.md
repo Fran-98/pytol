@@ -38,6 +38,7 @@ This enables automation in mission creation, allowing for more dynamic and compl
 * **Formation Generation**: Create points for standard unit formations (line, wedge, circle).
 * **Mission Building**: Construct `.vts` files programmatically, adding units, objectives, triggers, waypoints, and briefing notes.
 * **Scenario Primitives**: Helpers for generating common scenario setups like CSAR or base defense.
+* **3D Visualization** *(optional)*: Interactive visualization of terrain and complete missions using PyVista.
 
 ---
 
@@ -50,9 +51,18 @@ There are two ways to install Pytol:
 If you just want to use the library, you can install the latest stable release directly from the Python Package Index (PyPI):
 
 ```bash
-# Navigate to the directory containing Pytol's setup.py (or the pytol folder itself)
 pip install pytol
 ```
+
+### Optional: Visualization Module
+
+For 3D visualization of terrains and missions:
+
+```bash
+pip install pytol[viz]
+```
+
+This installs PyVista for interactive 3D visualization. See [Visualization Guide](pytol/visualization/README.md) for details.
 
 ### 2. From Source (For development)
 
@@ -71,6 +81,13 @@ pip install -e .
 ```
 
 You also need to ensure the **VTOL VR game directory** is accessible on both methods, either by setting the `VTOL_VR_DIR` environment variable or by providing paths directly during initialization.
+
+
+## Documentation
+
+📚 **[Mission Creation Guide](docs/mission_creation.md)** - Complete guide to creating missions with Pytol  
+🗺️ **[Terrain Behavior](docs/terrain_behavior.md)** - How terrain height sampling works and accuracy expectations  
+🎨 **[Visualization Guide](pytol/visualization/README.md)** - 3D visualization of terrains and missions (requires `pytol[viz]`)
 
 ---
 
@@ -278,13 +295,46 @@ except Exception as e:
 
   * **NumPy**: For numerical operations.
   * **SciPy**: For spatial data structures (KDTree) and interpolation.
-  * **Pillow (PIL Fork)**: For loading texture images.
+  * **Pillow**: For loading texture images.
 
-Install them via pip:
+-----
 
-```bash
-pip install numpy scipy pillow
+## 3D Visualization (Optional)
+
+If you installed `pytol[viz]`, you can visualize terrains and missions in 3D:
+
+```python
+from pytol import Mission, MissionVisualizer, TerrainVisualizer
+from pytol.terrain import TerrainCalculator
+
+# Visualize terrain only
+tc = TerrainCalculator("hMap2")
+terrain_viz = TerrainVisualizer(tc)
+terrain_viz.show()
+
+# Or visualize a complete mission
+mission = Mission(
+    scenario_name="Test Mission",
+    scenario_id="test",
+    description="Test",
+    map_id="hMap2"
+)
+# ... add units, objectives, etc ...
+
+mission_viz = MissionVisualizer(mission)
+mission_viz.show()
 ```
+
+The visualization shows:
+- Terrain elevation with color mapping
+- City blocks and buildings (green = spawnable, red = obstacles)
+- Road network and bridges
+- Mission units with team colors
+- Waypoints and paths
+
+See `examples/example_visualization.py` for a complete demo.
+
+
 
 -----
 

@@ -173,6 +173,148 @@ class Mission:
         self.event_sequences: List[EventSequence] = []
         self.random_events: List[RandomEvent] = []
 
+    # ========== Equipment Helper Methods ==========
+    
+    def set_allowed_equips_for_vehicle(self, vehicle_name: Optional[str] = None):
+        """
+        Automatically populate allowed_equips based on the vehicle from the equipment database.
+        
+        Args:
+            vehicle_name: Vehicle name (e.g., "F/A-26B"). If None, uses self.vehicle.
+        
+        Example:
+            mission.set_allowed_equips_for_vehicle()  # Uses mission's vehicle
+            mission.set_allowed_equips_for_vehicle("AV-42C")  # Override
+        """
+        from pytol.resources.equipment import get_equipment_for_vehicle
+        
+        vehicle = vehicle_name or self.vehicle
+        try:
+            equips = get_equipment_for_vehicle(vehicle)
+            self.allowed_equips = ";".join(equips) + ";"
+            print(f"✓ Set {len(equips)} allowed equipment items for {vehicle}")
+        except KeyError as e:
+            print(f"Warning: {e}")
+    
+    def set_forced_equips(self, equip_list: List[str]):
+        """
+        Set forced equipment loadout.
+        
+        Args:
+            equip_list: List of equipment IDs (one per hardpoint).
+                       Use empty string for empty slots.
+        
+        Example:
+            mission.set_forced_equips([
+                "fa26_gun",       # HP1: Gun
+                "fa26_aim9x2",    # HP2: 2x AIM-9
+                "fa26_droptank",  # HP3: Fuel tank
+                "",               # HP4: Empty
+                "fa26_droptank",  # HP5: Fuel tank
+                "fa26_aim9x2",    # HP6: 2x AIM-9
+                ""                # HP7: Empty
+            ])
+        """
+        self.forced_equips = ";".join(equip_list) + ";"
+        self.force_equips = True
+        print(f"✓ Set forced loadout: {len([e for e in equip_list if e])} equipped hardpoints")
+    
+    def use_loadout_preset(self, preset_name: str):
+        """
+        Use a pre-configured loadout preset.
+        
+        Args:
+            preset_name: Name of preset (e.g., "fa26_air_to_air", "av42_cas")
+        
+        Available presets:
+            - fa26_air_to_air: F/A-26B air superiority
+            - fa26_cas: F/A-26B close air support
+            - fa26_strike: F/A-26B precision strike
+            - av42_transport: AV-42C light transport
+            - av42_cas: AV-42C close air support
+            - f45_stealth_strike: F-45A stealth strike
+        
+        Example:
+            mission.use_loadout_preset("fa26_air_to_air")
+        """
+        from pytol.resources.equipment import LoadoutPresets
+        
+        try:
+            loadout = LoadoutPresets.get_preset(preset_name)
+            self.set_forced_equips(loadout)
+        except ValueError as e:
+            print(f"Error: {e}")
+    
+    # ========== End Equipment Methods ==========
+    
+    # ========== Base Discovery Methods ==========
+    
+    def get_available_bases(self):
+        """
+        Returns a list of all bases (airbases, carriers, FOBs) available on the map.
+        
+        Returns:
+            list: List of base dictionaries with keys:
+                - id: Base ID from map
+                - name: Base name
+                - prefab_type: Type (airbase1, airbase2, carrier1, etc.)
+                - position: [x, y, z] coordinates
+                - rotation: [pitch, yaw, roll] in degrees
+                - footprint: Bounding box dimensions
+        
+        Example:
+            bases = mission.get_available_bases()
+            for base in bases:
+                print(f"{base['name']} at {base['position']}")
+        """
+        if not hasattr(self, 'tc') or self.tc is None:
+            print("Warning: TerrainCalculator not initialized. Cannot retrieve bases.")
+            return []
+        
+        return self.tc.get_all_bases()
+    
+    def get_base_by_name(self, name: str):
+        """
+        Find a base by name (case-insensitive partial match).
+        
+        Args:
+            name: Base name or partial name to search for
+        
+        Returns:
+            dict: Base information, or None if not found
+        
+        Example:
+            northeast_base = mission.get_base_by_name("Northeast")
+        """
+        if not hasattr(self, 'tc') or self.tc is None:
+            print("Warning: TerrainCalculator not initialized.")
+            return None
+        
+        return self.tc.get_base_by_name(name)
+    
+    def get_nearest_base(self, x, z):
+        """
+        Find the nearest base to a given coordinate.
+        
+        Args:
+            x: X world coordinate
+            z: Z world coordinate
+        
+        Returns:
+            tuple: (base_dict, distance_in_meters) or (None, None)
+        
+        Example:
+            base, dist = mission.get_nearest_base(50000, 100000)
+            print(f"Nearest base: {base['name']} ({dist:.0f}m away)")
+        """
+        if not hasattr(self, 'tc') or self.tc is None:
+            print("Warning: TerrainCalculator not initialized.")
+            return None, None
+        
+        return self.tc.get_nearest_base(x, z)
+    
+    # ========== End Base Discovery Methods ==========
+
     def _get_or_assign_id(self, obj: Any, prefix: str, user_provided_id: Optional[Union[str, int]] = None) -> Union[str, int]:
         """
         Gets the assigned VTS ID for an object, or assigns one if not yet added.
@@ -546,10 +688,40 @@ class Mission:
             raise TypeError("note_obj must be a BriefingNote dataclass.")
         self.briefing_notes.append(note_obj)
 
-    def add_resource(self, res_id: int, path: str): # TODO: Pass path to file in system and then copy that img or audio to the mission folder
-        """Adds a resource to the ResourceManifest."""
+    def add_resource(self, res_id: int, path: str):
+        """
+        Adds a resource and automatically copies the file to the mission output directory.
+        
+        Args:
+            res_id: Unique integer identifier for the resource
+            path: Source path to the resource file on your system (absolute or relative to current working directory)
+            
+        Examples:
+            # Add audio briefing
+            mission.add_resource(1, "C:/MyMissions/audio/briefing.wav")
+            # This will copy briefing.wav to: <mission_folder>/audio/briefing.wav
+            
+            # Add custom image
+            mission.add_resource(2, "./images/custom_hud.png")
+            # This will copy custom_hud.png to: <mission_folder>/images/custom_hud.png
+            
+        Note:
+            Files are copied automatically when save_mission() is called.
+            The file extension determines the subdirectory:
+            - .wav → audio/
+            - .png, .jpg, .jpeg → images/
+            
+        Raises:
+            FileNotFoundError: If the source file doesn't exist
+        """
         if res_id in self.resource_manifest:
             print(f"Warning: Overwriting resource with ID {res_id}")
+        
+        # Validate source file exists
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Resource file not found: {path}")
+        
+        # Store the source path for later copying during save_mission()
         self.resource_manifest[res_id] = path
 
     def add_conditional(self, conditional_obj, conditional_id: Optional[str] = None) -> str:
@@ -1622,7 +1794,8 @@ class Mission:
     def save_mission(self, base_path: str) -> str:
         """
         Saves the mission .vts file and copies the associated map folder
-        into the specified base path.
+        into the specified base path. Also copies any resource files added
+        via add_resource() to their appropriate subdirectories.
         """
         mission_dir = os.path.join(base_path, self.scenario_id)
         os.makedirs(mission_dir, exist_ok=True)
@@ -1632,6 +1805,36 @@ class Mission:
             os.path.join(mission_dir, self.map_id), 
             dirs_exist_ok=True
         )
+        
+        # Copy resource files and update paths to relative
+        if self.resource_manifest:
+            for res_id, source_path in list(self.resource_manifest.items()):
+                # Determine subdirectory based on file extension
+                ext = os.path.splitext(source_path)[1].lower()
+                if ext in ['.wav', '.ogg', '.mp3']:
+                    subdir = 'audio'
+                elif ext in ['.png', '.jpg', '.jpeg', '.bmp']:
+                    subdir = 'images'
+                else:
+                    print(f"Warning: Unknown resource file extension '{ext}' for resource {res_id}")
+                    subdir = 'resources'
+                
+                # Create subdirectory
+                dest_dir = os.path.join(mission_dir, subdir)
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Copy file
+                filename = os.path.basename(source_path)
+                dest_path = os.path.join(dest_dir, filename)
+                
+                try:
+                    shutil.copy2(source_path, dest_path)
+                    # Update manifest to relative path
+                    relative_path = f"{subdir}/{filename}"
+                    self.resource_manifest[res_id] = relative_path
+                    print(f"✅ Copied resource {res_id}: {filename} → {relative_path}")
+                except Exception as e:
+                    print(f"❌ Error copying resource {res_id} from '{source_path}': {e}")
         
         vts_path = os.path.join(mission_dir, f"{self.scenario_id}.vts")
         self._save_to_file(vts_path)

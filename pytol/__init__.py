@@ -35,4 +35,28 @@ from .classes.conditionals import ConditionalTree
 from .terrain.terrain_calculator import TerrainCalculator
 from .terrain.mission_terrain_helper import MissionTerrainHelper
 
+# --- Equipment System ---
+from .resources.equipment import (
+    EquipmentBuilder,
+    LoadoutPresets,
+    get_available_vehicles,
+    get_equipment_for_vehicle,
+    search_equipment,
+    EquipmentNotFoundError,
+    InvalidLoadoutError
+)
+
 print(f"Pytol {__version__} loaded.")
+
+# --- Visualization (Optional) ---
+# Import visualization if pyvista is available
+try:
+    from .visualization import MissionVisualizer, TerrainVisualizer
+    _viz_available = True
+except ImportError:
+    _viz_available = False
+    MissionVisualizer = None
+    TerrainVisualizer = None
+
+if _viz_available:
+    print("  -> Visualization module available (pyvista detected)")

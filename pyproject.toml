@@ -21,6 +21,16 @@ dependencies = [
     "python-dotenv"
 ]
 
+[project.optional-dependencies]
+viz = [
+    "pytol",
+    "pyvista"
+]
+
+all = [
+    "pytol[viz]"
+]
+
 [project.urls]
 Homepage = "https://github.com/Fran-98/pytol"
 Issues = "https://github.com/Fran-98/pytol/issues"

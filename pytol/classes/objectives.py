@@ -337,22 +337,8 @@ def create_objective(
     # Combine base args and specific fields for instantiation
     all_args = {**base_args, **objective_specific_fields}
 
-    # --- DEBUG: Try creating with all args ---
     try:
-        print("--- DEBUG: Attempting creation with all_args ---")
         instance = ClassToCreate(**all_args)
-        print(f"--- DEBUG: Creation successful. Instance has start_event_targets: {'start_event_targets' in dir(instance)}")
-
-        # --- Original Debug Prints ---
-        print(f"--- DEBUG: Final Objective Instance ---")
-        print(f"Instance Type: {type(instance)}")
-        # print(f"Instance Data: {instance}") # Comment this out for now if it still errors
-        print(f"Has 'start_event_targets'? {'start_event_targets' in dir(instance)}")
-        print(f"Value of 'start_event_targets': {getattr(instance, 'start_event_targets', 'ATTRIBUTE NOT FOUND')}")
-        print(f"Fields dict: {instance.fields}")
-        print(f"----------------------------------------")
-        # --- END DEBUG ---
-
         return cast("Objective", instance)
 
     except TypeError as e:

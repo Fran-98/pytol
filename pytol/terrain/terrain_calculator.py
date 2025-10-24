@@ -52,9 +52,20 @@ class TerrainCalculator:
     Calculates terrain height, normals, and procedural object placement.
     """
 
-    def __init__(self, map_name: str = '', map_directory_path: str = '', vtol_directory: str = ''):
-        """Initializes the TerrainCalculator by loading all necessary data."""
-
+    def __init__(self, map_name: str = '', map_directory_path: str = '', vtol_directory: str = '',
+                 height_scale: float = 1.0, height_offset: float = 0.0):
+        """Initializes the TerrainCalculator by loading all necessary data.
+        
+        Args:
+            map_name: Name of the map (used with vtol_directory or VTOL_VR_DIR env var)
+            map_directory_path: Direct path to map directory
+            vtol_directory: Path to VTOL VR installation directory
+            height_scale: Linear scale factor applied to terrain heights (default: 1.0)
+            height_offset: Offset in meters added after scaling (default: 0.0)
+        """
+        # Store height correction factors
+        self.height_scale = height_scale
+        self.height_offset = height_offset
         
         if map_directory_path:
             self.map_dir = map_directory_path
@@ -72,6 +83,7 @@ class TerrainCalculator:
         self._load_vtm_file(self.map_dir)
         self._load_textures()
         self._load_databases()
+        self._load_airbases()
 
         # --- Calibrate and Pre-process ---
         self.coord_transform_mode = None
@@ -135,6 +147,75 @@ class TerrainCalculator:
 
         except FileNotFoundError as e: 
             raise FileNotFoundError(f"Fatal Error loading databases: {e}") from e
+
+    def _load_airbases(self):
+        """Load airbase data from VTM static prefabs for terrain flattening detection."""
+        self.airbases = []
+        
+        # Get static prefabs from VTM
+        prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
+        if not isinstance(prefabs_node, list):
+            prefabs_node = [prefabs_node] if prefabs_node else []
+        
+        # Filter for airbase prefabs
+        for prefab in prefabs_node:
+            prefab_name = prefab.get('prefab', '')
+            if 'airbase' not in prefab_name.lower():
+                continue
+                
+            try:
+                global_pos = prefab['globalPos']
+                rotation = prefab.get('rotation', [0, 0, 0])
+                
+                # Store airbase data
+                airbase_data = {
+                    'center_x': float(global_pos[0]),
+                    'center_y': float(global_pos[1]),  # This is the flattened height
+                    'center_z': float(global_pos[2]),
+                    'rotation_y': float(rotation[1]),  # Yaw rotation in degrees
+                    'prefab_name': prefab_name
+                }
+                
+                # Get footprint from prefab database (approximate bounds)
+                # For now, use a conservative fixed size based on airbase1 measurements
+                # The flattened area in VTOL VR is larger than the physical base colliders
+                # TODO: Load actual flattened bounds from prefab database per type
+                airbase_data['half_width'] = 1400.0  # ~2800m total width (generous)
+                airbase_data['half_length'] = 1600.0  # ~3200m total length (generous)
+                
+                self.airbases.append(airbase_data)
+                
+            except (KeyError, ValueError, IndexError) as e:
+                print(f"Warning: Failed to parse airbase data from prefab: {e}")
+                continue
+        
+        if self.airbases:
+            print(f"Loaded {len(self.airbases)} airbase(s) for terrain flattening detection.")
+
+    def _is_inside_airbase(self, world_x, world_z):
+        """
+        Check if a world coordinate is inside any airbase footprint.
+        Returns the airbase's flattened height if inside, None otherwise.
+        """
+        for base in self.airbases:
+            # Translate to base-local coordinates
+            dx = world_x - base['center_x']
+            dz = world_z - base['center_z']
+            
+            # Rotate by -yaw to get axis-aligned local coordinates
+            yaw_rad = np.radians(-base['rotation_y'])
+            cos_yaw = np.cos(yaw_rad)
+            sin_yaw = np.sin(yaw_rad)
+            
+            local_x = dx * cos_yaw - dz * sin_yaw
+            local_z = dx * sin_yaw + dz * cos_yaw
+            
+            # Check if inside axis-aligned bounding box
+            if (abs(local_x) <= base['half_width'] and 
+                abs(local_z) <= base['half_length']):
+                return base['center_y']
+        
+        return None
 
     def _process_static_prefabs(self):
         """Parses static prefabs from .vtm and calculates world-space bounds for all their surfaces."""
@@ -333,9 +414,19 @@ class TerrainCalculator:
     # --- Public Methods ---
     def get_terrain_height(self, world_x, world_z):
         if self.coord_transform_mode is None: raise Exception("Not calibrated.")
+        
+        # Check if inside an airbase first (VTOL VR flattens terrain under bases)
+        airbase_height = self._is_inside_airbase(world_x, world_z)
+        if airbase_height is not None:
+            # Apply height correction factors to airbase flat height
+            return (airbase_height * self.height_scale) + self.height_offset
+        
+        # Otherwise, sample from heightmap as usual
         uv_x = world_x / self.total_map_size_meters; uv_z = world_z / self.total_map_size_meters
         r_val = self._get_pixel_value(self.heightmap_data_r, uv_x, uv_z)
-        return max(0.0, (r_val * (self.max_height - self.min_height)) + self.min_height)
+        height = max(0.0, (r_val * (self.max_height - self.min_height)) + self.min_height)
+        # Apply optional height correction factors
+        return (height * self.height_scale) + self.height_offset
         
     def get_terrain_normal(self, world_x, world_z, delta=1.0):
         h0=self.get_terrain_height(world_x,world_z);hx=self.get_terrain_height(world_x+delta,world_z);hz=self.get_terrain_height(world_x,world_z+delta);vx=np.array([delta,hx-h0,0]);vz=np.array([0,hz-h0,delta]);normal=np.cross(vz,vx);norm_mag=np.linalg.norm(normal);return normal/norm_mag if norm_mag>0 else np.array([0,1,0])
