@@ -2,6 +2,7 @@ __version__ = "0.2.0"
 
 # --- Core Mission Building ---
 from .parsers.vts_builder import Mission
+from .parsers.vtc_builder import Campaign
 
 # --- Object Creation Factories ---
 from .classes.units import create_unit

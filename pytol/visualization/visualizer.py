@@ -25,7 +25,7 @@ class TerrainVisualizer:
         >>> viz.show()
     """
     
-    def __init__(self, terrain_calculator, mesh_resolution: int = 256, drape_roads: bool = True):
+    def __init__(self, terrain_calculator, mesh_resolution: int = 256, drape_roads: bool = True, verbose: bool = True):
         """
         Initialize terrain visualizer.
         
@@ -33,20 +33,27 @@ class TerrainVisualizer:
             terrain_calculator: TerrainCalculator instance
             mesh_resolution: Resolution for terrain mesh (default: 256)
             drape_roads: Whether to drape roads on terrain surface (default: True)
+            verbose: Whether to print progress messages (default: True)
         """
         self.calculator = terrain_calculator
         self.mesh_resolution = mesh_resolution
         self.drape_roads = drape_roads
+        self.verbose = verbose
         self.plotter = None
         
         # Pre-process data
         self._generate_terrain_mesh()
         self._generate_building_meshes()
         self._generate_road_meshes()
+    
+    def _log(self, message: str):
+        """Print message if verbose mode is enabled."""
+        if self.verbose:
+            self._log(message)
         
     def _generate_terrain_mesh(self):
         """Generate the base terrain mesh from heightmap."""
-        print(f"Generating {self.mesh_resolution}x{self.mesh_resolution} terrain mesh...")
+        self._log(f"Generating {self.mesh_resolution}x{self.mesh_resolution} terrain mesh...")
         total_size = self.calculator.total_map_size_meters
         x_points = np.linspace(0, total_size, self.mesh_resolution)
         z_points = np.linspace(0, total_size, self.mesh_resolution)
@@ -55,11 +62,11 @@ class TerrainVisualizer:
         
         self.terrain_surface = pv.StructuredGrid(-xx, yy, zz).extract_surface()
         self.terrain_surface.point_data['Altitude'] = yy.ravel(order='C')
-        print("Terrain mesh created.")
+        self._log("Terrain mesh created.")
         
     def _generate_building_meshes(self):
         """Generate meshes for city blocks and static prefabs."""
-        print("Generating building and prefab meshes...")
+        self._log("Generating building and prefab meshes...")
         spawnable_meshes, obstacle_meshes = [], []
         
         # City Blocks
@@ -117,11 +124,11 @@ class TerrainVisualizer:
         
         self.spawnable_combined = pv.MultiBlock(spawnable_meshes).combine(merge_points=False) if spawnable_meshes else None
         self.obstacle_combined = pv.MultiBlock(obstacle_meshes).combine(merge_points=False) if obstacle_meshes else None
-        print(f"Rendered {len(spawnable_meshes) + len(obstacle_meshes)} building/prefab surfaces.")
+        self._log(f"Rendered {len(spawnable_meshes) + len(obstacle_meshes)} building/prefab surfaces.")
         
     def _generate_road_meshes(self):
         """Generate road network meshes."""
-        print("Generating road network meshes...")
+        self._log("Generating road network meshes...")
         road_meshes, bridge_meshes = [], []
         
         for seg in self.calculator.road_segments:
@@ -140,7 +147,7 @@ class TerrainVisualizer:
         
         self.roads_combined = pv.MultiBlock(road_meshes).combine(merge_points=False) if road_meshes else None
         self.bridges_combined = None  # Bridges not distinguished in current format
-        print(f"Rendered {len(road_meshes)} road segments.")
+        self._log(f"Rendered {len(road_meshes)} road segments.")
         
     def show(self, window_size: Tuple[int, int] = (1600, 900)):
         """
@@ -181,10 +188,10 @@ class TerrainVisualizer:
         self.plotter.add_legend()
         self.plotter.add_axes()
         
-        print("\nVisualization Controls:")
-        print("  'q': Exit")
-        print("  Mouse: Click and drag to rotate")
-        print("  Scroll: Zoom in/out")
+        self._log("\nVisualization Controls:")
+        self._log("  'q': Exit")
+        self._log("  Mouse: Click and drag to rotate")
+        self._log("  Scroll: Zoom in/out")
         
         self.plotter.show()
 
@@ -204,7 +211,7 @@ class MissionVisualizer(TerrainVisualizer):
         >>> viz.show()
     """
     
-    def __init__(self, mission, mesh_resolution: int = 256, drape_roads: bool = True):
+    def __init__(self, mission, mesh_resolution: int = 256, drape_roads: bool = True, verbose: bool = True):
         """
         Initialize mission visualizer.
         
@@ -212,9 +219,10 @@ class MissionVisualizer(TerrainVisualizer):
             mission: Mission instance from pytol
             mesh_resolution: Resolution for terrain mesh (default: 256)
             drape_roads: Whether to drape roads on terrain surface (default: True)
+            verbose: Whether to print progress messages (default: True)
         """
         self.mission = mission
-        super().__init__(mission.tc, mesh_resolution, drape_roads)
+        super().__init__(mission.tc, mesh_resolution, drape_roads, verbose)
         
     def _pv_pos(self, pos: Tuple[float, float, float]) -> List[float]:
         """Convert VTOL VR position to PyVista coordinates."""
@@ -268,7 +276,7 @@ class MissionVisualizer(TerrainVisualizer):
                                 line_width=4, opacity=0.5)
         
         # Add mission units
-        print("Adding mission units to visualization...")
+        self._log("Adding mission units to visualization...")
         for unit_data in self.mission.units:
             unit_obj = unit_data['unit_obj']
             pos = unit_data.get('global_position', (0, 0, 0))
@@ -283,14 +291,14 @@ class MissionVisualizer(TerrainVisualizer):
             self._add_labeled_point(pos, unit_name, color)
         
         # Add waypoints
-        print("Adding waypoints...")
+        self._log("Adding waypoints...")
         for waypoint in self.mission.waypoints:
             pos = (waypoint.global_point.x, waypoint.global_point.y, waypoint.global_point.z)
             name = waypoint.name if waypoint.name else f"WP-{waypoint.id}"
             self._add_labeled_point(pos, name, 'yellow')
         
         # Add paths
-        print("Adding paths...")
+        self._log("Adding paths...")
         for path in self.mission.paths:
             points = [(p.global_point.x, p.global_point.y, p.global_point.z) 
                      for p in path.points]
@@ -320,17 +328,18 @@ class MissionVisualizer(TerrainVisualizer):
         self.plotter.add_legend()
         self.plotter.add_axes()
         
-        print("\n" + "="*50)
-        print(f"Mission: {self.mission.scenario_name}")
-        print(f"Map: {self.mission.map_id}")
-        print(f"Units: {len(self.mission.units)}")
-        print(f"Waypoints: {len(self.mission.waypoints)}")
-        print(f"Objectives: {len(self.mission.objectives)}")
-        print("="*50)
-        print("\nVisualization Controls:")
-        print("  'q': Exit")
-        print("  Mouse: Click and drag to rotate")
-        print("  Scroll: Zoom in/out")
-        print("="*50)
+        self._log("\n" + "="*50)
+        self._log(f"Mission: {self.mission.scenario_name}")
+        self._log(f"Map: {self.mission.map_id}")
+        self._log(f"Units: {len(self.mission.units)}")
+        self._log(f"Waypoints: {len(self.mission.waypoints)}")
+        self._log(f"Objectives: {len(self.mission.objectives)}")
+        self._log("="*50)
+        self._log("\nVisualization Controls:")
+        self._log("  'q': Exit")
+        self._log("  Mouse: Click and drag to rotate")
+        self._log("  Scroll: Zoom in/out")
+        self._log("="*50)
         
         self.plotter.show()
+

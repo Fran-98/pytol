@@ -5,61 +5,53 @@ This guide covers how to create VTOL VR missions programmatically using Pytol.
 ## Quick Start
 
 ```python
-from pytol import Mission, Conditional, Action, Objective, Unit, GlobalValue
-from pytol import TerrainCalculator
+from pytol import Mission
 
-# 1. Initialize terrain calculator for your map (use a known heightmap-based map)
-tc = TerrainCalculator(
-    map_name="hMap2",  # Known good HeightMap (also works: "costaOeste")
-    vtol_directory=r"C:\Program Files (x86)\Steam\steamapps\common\VTOL VR"
+# 1. Create a new mission
+mission = Mission(
+    scenario_name="Strike on Enemy Airbase",
+    scenario_id="strike_mission_1",
+    description="Destroy enemy aircraft at their forward operating base.",
+    vehicle="F/A-26B",
+    map_id="hMap2",
+    vtol_directory=r"C:\Program Files (x86)\Steam\steamapps\common\VTOL VR",
+    verbose=True
 )
 
-# 2. Create a new mission
-mission = Mission()
-mission.map_id = "hMap2"   # Must match the map folder name EXACTLY (case-sensitive)
-mission.campaign_id = "custom_mission"
-mission.campaign_order_idx = 0
-mission.mission_name = "Strike on Enemy Airbase"
-mission.mission_description = "Destroy enemy aircraft at their forward operating base."
+# 2. Access the terrain calculator (automatically created)
+tc = mission.tc  # TerrainCalculator instance
+helper = mission.helper  # MissionTerrainHelper instance
 
-# 3. Add a player unit
-player = Unit.create_aircraft(
-    unit_name="Player",
-    global_position=(100000, 500, 50000),  # (x, y, z)
-    unit_instance_id=1,
-    aircraft_type="FA-26B",
-    initial_speed=150.0
+# 3. Add a player spawn
+mission.add_allied_spawn(
+    global_position=(100000, 500, 50000),
+    heading=0,
+    unit_name="Player"
 )
-mission.add_unit(player)
 
 # 4. Add enemy units with terrain-aware placement
-enemy_pos = (105000, 0, 52000)  # Initial position
+enemy_pos = (105000, 0, 52000)
 placement = tc.get_smart_placement(enemy_pos[0], enemy_pos[2], yaw_degrees=90)
-enemy = Unit.create_aircraft(
-    unit_name="Enemy Fighter",
+
+mission.add_enemy_unit(
     global_position=placement['position'],
     rotation=placement['rotation'],
-    unit_instance_id=2,
-    aircraft_type="EF-24",
-    initial_speed=0.0,
-    start_on_ground=True
+    unit_name="Enemy Fighter",
+    unit_type="EF-24"
 )
-mission.add_unit(enemy)
 
 # 5. Add an objective
-obj = Objective(
-    objective_id=1,
-    objective_type="DESTROY",
+mission.add_destroy_objective(
+    target_unit_name="Enemy Fighter",
     objective_name="Destroy Enemy Aircraft",
-    target_unit_id=2,  # Enemy fighter
-    required_success=True,
-    completion_reward=100
+    required=True
 )
-mission.add_objective(obj)
 
 # 6. Save the mission
-mission.save("my_custom_mission.vts")
+mission.save_mission("./output")  # Creates: ./output/strike_mission_1/
 ```
+
+**Note:** `save_mission()` creates a folder structure with the mission file and map data inside.
 
 ## Map Selection and Realism Tips
 
@@ -74,16 +66,18 @@ mission.save("my_custom_mission.vts")
 The `Mission` class represents a complete VTOL VR mission file (.vts).
 
 ```python
-mission = Mission()
+mission = Mission(
+    scenario_name="Mission Title",            # Display name in game
+    scenario_id="my_mission_01",              # Unique identifier (folder name)
+    description="Mission briefing text",      # Briefing shown to player
+    vehicle="F/A-26B",                        # Player aircraft (default: "AV-42C")
+    map_id="hMap2",                           # Map folder name (case-sensitive)
+    vtol_directory=r"C:\...\VTOL VR",        # Path to VTOL VR installation
+    verbose=True                              # Print progress messages (default: True)
+)
 
-# Required properties
-mission.map_id = "hMap2"                     # Map folder name (case-sensitive)
-mission.campaign_id = "my_campaign"           # Campaign identifier
-mission.mission_name = "Mission Title"        # Display name
-mission.mission_description = "Description"   # Briefing text
-
-# Optional properties
-mission.campaign_order_idx = 0                # Order in campaign
+# Optional properties that can be set after creation
+mission.campaign_order_idx = 0                # Order in campaign (if part of one)
 mission.mission_info.rtb_location = (100000, 500, 50000)  # Return to base waypoint
 mission.mission_info.is_training = False      # Training mission flag
 mission.mission_info.force_equipment = []     # Lock player loadout (list of equipment IDs)
@@ -408,17 +402,22 @@ mission.add_conditional(cond)
 ## Complete Example: Strike Mission
 
 ```python
-from pytol import Mission, Unit, Objective, Conditional, Action, TerrainCalculator
+from pytol import Mission, Unit, Objective, Conditional, Action
 
 # Setup
 vtol_path = r"C:\Program Files (x86)\Steam\steamapps\common\VTOL VR"
-tc = TerrainCalculator(map_name="hMap2", vtol_directory=vtol_path)
 
-mission = Mission()
-mission.map_id = "hMap2"
-mission.campaign_id = "custom_strike"
-mission.mission_name = "Operation Iron Fist"
-mission.mission_description = "Strike enemy airbase and destroy parked aircraft before they can scramble."
+mission = Mission(
+    scenario_name="Operation Iron Fist",
+    scenario_id="custom_strike",
+    description="Strike enemy airbase and destroy parked aircraft before they can scramble.",
+    vehicle="F/A-26B",
+    map_id="hMap2",
+    vtol_directory=vtol_path,
+    verbose=True
+)
+
+tc = mission.tc  # Access the TerrainCalculator
 mission.mission_info.rtb_location = (98000, 500, 48000)
 
 # Player starts on carrier
@@ -520,8 +519,8 @@ for sam_id in range(20, 24):
 
 mission.add_conditional(cond_sams)
 
-# Save
-mission.save("operation_iron_fist.vts")
+# Save the mission
+mission.save_mission("./output")
 print("Mission created successfully!")
 ```
 

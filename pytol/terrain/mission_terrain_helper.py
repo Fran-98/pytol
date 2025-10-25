@@ -17,19 +17,26 @@ class MissionTerrainHelper:
     and tactical locations.
     """
 
-    def __init__(self, terrain_calculator: TerrainCalculator):
+    def __init__(self, terrain_calculator: TerrainCalculator, verbose: bool = None):
         """
         Initializes the helper with a pre-loaded TerrainCalculator instance.
 
         Args:
             terrain_calculator: An initialized instance of the TerrainCalculator class.
+            verbose: Whether to print progress messages. If None, inherits from terrain_calculator.
         """
         if not isinstance(terrain_calculator, TerrainCalculator):
             raise TypeError("The provided argument must be an instance of TerrainCalculator.")
         self.tc = terrain_calculator
+        self.verbose = verbose if verbose is not None else terrain_calculator.verbose
         self._bridges = None
         self._pois_cache = None
-        print("MissionTerrainHelper initialized.")
+        self._log("MissionTerrainHelper initialized.")
+    
+    def _log(self, message: str):
+        """Print message if verbose mode is enabled."""
+        if self.verbose:
+            print(message)
 
     # --- Core Terrain and Objects queries ---
 
@@ -1203,7 +1210,7 @@ class MissionTerrainHelper:
         garrison_points = []
         # This requires more detailed info from TerrainCalculator that is not exposed.
         # This is a conceptual implementation. A real one would need tc.get_surfaces_for_prefab().
-        print("NOTE: get_building_garrison_points is a conceptual placeholder.")
+        self._log("NOTE: get_building_garrison_points is a conceptual placeholder.")
         # Dummy implementation: returns a point slightly above the building center.
         pos = building_info['position']
         garrison_points.append((pos[0], pos[1] + 20, pos[2]))
