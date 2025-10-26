@@ -23,6 +23,7 @@ from pytol.classes.actions import GlobalValueActions
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
 from pytol.terrain.terrain_calculator import TerrainCalculator
 from pytol.classes.units import UNIT_CLASS_TO_ACTION_CLASS
+from pytol.misc.logger import create_logger
 
 # --- Constants ---
 from pytol.classes.conditionals import CLASS_TO_ID
@@ -78,13 +79,22 @@ class Mission:
                  map_id: str = "",
                  map_path: str = "",
                  vtol_directory: str = '',
-                 verbose: bool = True):
-        """Initializes a new VTOL VR Mission."""
+                 verbose: bool = True,
+                 strict: bool = False):
+        """Initializes a new VTOL VR Mission.
+        
+        Args:
+            strict: If True, validate mission integrity before saving.
+        """
         self.scenario_name = scenario_name
         self.scenario_id = scenario_id
         self.scenario_description = description if description else ""
         self.vehicle = vehicle
         self.verbose = verbose
+        self.strict = strict
+        
+        # Initialize logger
+        self.logger = create_logger(verbose=verbose, name="Mission")
 
         # --- Map Handling --- (No changes needed here)
         if map_path:
@@ -193,11 +203,6 @@ class Mission:
         self.event_sequences: List[EventSequence] = []
         self.random_events: List[RandomEvent] = []
 
-    def _log(self, message: str):
-        """Print message if verbose mode is enabled."""
-        if self.verbose:
-            self._log(message)
-
     # ========== Equipment Helper Methods ==========
     
     def set_allowed_equips_for_vehicle(self, vehicle_name: Optional[str] = None):
@@ -217,9 +222,9 @@ class Mission:
         try:
             equips = get_equipment_for_vehicle(vehicle)
             self.allowed_equips = ";".join(equips) + ";"
-            self._log(f"✓ Set {len(equips)} allowed equipment items for {vehicle}")
+            self.logger.info(f"✓ Set {len(equips)} allowed equipment items for {vehicle}")
         except KeyError as e:
-            self._log(f"Warning: {e}")
+            self.logger.warning(f"{e}")
     
     def set_forced_equips(self, equip_list: List[str]):
         """
@@ -242,7 +247,7 @@ class Mission:
         """
         self.forced_equips = ";".join(equip_list) + ";"
         self.force_equips = True
-        self._log(f"✓ Set forced loadout: {len([e for e in equip_list if e])} equipped hardpoints")
+        self.logger.info(f"✓ Set forced loadout: {len([e for e in equip_list if e])} equipped hardpoints")
     
     def use_loadout_preset(self, preset_name: str):
         """
@@ -268,7 +273,7 @@ class Mission:
             loadout = LoadoutPresets.get_preset(preset_name)
             self.set_forced_equips(loadout)
         except ValueError as e:
-            self._log(f"Error: {e}")
+            self.logger.error(f"{e}")
     
     # ========== End Equipment Methods ==========
     
@@ -290,10 +295,10 @@ class Mission:
         Example:
             bases = mission.get_available_bases()
             for base in bases:
-                self._log(f"{base['name']} at {base['position']}")
+                self.logger.info(f"{base['name']} at {base['position']}")
         """
         if not hasattr(self, 'tc') or self.tc is None:
-            self._log("Warning: TerrainCalculator not initialized. Cannot retrieve bases.")
+            self.logger.warning("TerrainCalculator not initialized. Cannot retrieve bases.")
             return []
         
         return self.tc.get_all_bases()
@@ -312,7 +317,7 @@ class Mission:
             northeast_base = mission.get_base_by_name("Northeast")
         """
         if not hasattr(self, 'tc') or self.tc is None:
-            self._log("Warning: TerrainCalculator not initialized.")
+            self.logger.warning("TerrainCalculator not initialized.")
             return None
         
         return self.tc.get_base_by_name(name)
@@ -330,10 +335,10 @@ class Mission:
         
         Example:
             base, dist = mission.get_nearest_base(50000, 100000)
-            self._log(f"Nearest base: {base['name']} ({dist:.0f}m away)")
+            self.logger.info(f"Nearest base: {base['name']} ({dist:.0f}m away)")
         """
         if not hasattr(self, 'tc') or self.tc is None:
-            self._log("Warning: TerrainCalculator not initialized.")
+            self.logger.warning("TerrainCalculator not initialized.")
             return None, None
         
         return self.tc.get_nearest_base(x, z)
@@ -407,7 +412,7 @@ class Mission:
                 assigned_id = target_map[obj_py_id]
                 # If user provided an ID, ensure it matches the already assigned one
                 if user_provided_id is not None and user_provided_id != assigned_id:
-                    self._log(f"Warning: {obj_type_name} object was already added with ID '{assigned_id}'. Ignoring user ID '{user_provided_id}'.")
+                    self.logger.warning(f"{obj_type_name} object was already added with ID '{assigned_id}'. Ignoring user ID '{user_provided_id}'.")
                 return assigned_id
         else: # Int ID type (Trigger, Objective)
             if user_provided_id in target_map:
@@ -427,10 +432,10 @@ class Mission:
 
             # Print appropriate message based on type
             if id_type == "int":
-                self._log(f"Assigning automatic integer ID '{assigned_id}' to {obj_type_name} '{getattr(obj, 'name', '')}'")
+                self.logger.info(f"Assigning automatic integer ID '{assigned_id}' to {obj_type_name} '{getattr(obj, 'name', '')}'")
             else: # Should only be string type left (Conditionals)
                 assigned_id = f"{prefix}_{assigned_id}" # Format the string ID using the counter number
-                self._log(f"Assigning automatic string ID '{assigned_id}' to {obj_type_name} '{getattr(obj, 'name', '')}'")
+                self.logger.info(f"Assigning automatic string ID '{assigned_id}' to {obj_type_name} '{getattr(obj, 'name', '')}'")
 
         # --- Add object to mission list/dict and map ---
         if isinstance(target_list_or_dict, list):
@@ -518,9 +523,9 @@ class Mission:
         if ActionClass:
             # Pass the instance ID (uid) as the target_id for VTS events
             unit_obj.actions = ActionClass(target_id=uid)
-            self._log(f"  > Attached actions helper '{ActionClass.__name__}' to unit {uid}")
+            self.logger.info(f"  > Attached actions helper '{ActionClass.__name__}' to unit {uid}")
         else:
-            self._log(f"  > Warning: No action helper found for unit type {type(unit_obj).__name__}")
+            self.logger.warning(f"  > No action helper found for unit type {type(unit_obj).__name__}")
 
         # --- Determine Default Smart Placement ---
         if use_smart_placement is None:
@@ -537,18 +542,18 @@ class Mission:
         initial_yaw = initial_rot[1]
 
         if on_carrier:
-            self._log(f"Placing unit {uid} ('{unit_obj.unit_name}') on carrier.")
+            self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') on carrier.")
             editor_mode = "Ground" # Assuming ground mode for carrier placement
         elif placement == "ground":
             if use_smart_placement:
-                self._log(f"Attempting smart placement for unit {uid} at ({x:.2f}, {z:.2f})...")
+                self.logger.info(f"Attempting smart placement for unit {uid} at ({x:.2f}, {z:.2f})...")
                 try:
                     # Use the comprehensive smart placement function from TerrainCalculator
                     placement_info = self.tc.get_smart_placement(x, z, initial_yaw)
                     placement_type = placement_info['type']
                     final_pos = list(placement_info['position'])
                     final_rot = list(placement_info['rotation']) # Use rotation from smart placement
-                    self._log(f"  > Smart placement result: {placement_type} at {final_pos[1]:.2f}m")
+                    self.logger.info(f"  > Smart placement result: {placement_type} at {final_pos[1]:.2f}m")
 
                     # Set editor mode based on type
                     if placement_type in ['static_prefab_roof', 'city_roof', 'road', 'terrain']:
@@ -556,16 +561,16 @@ class Mission:
 
                     # Override rotation if alignment is disabled for terrain/road
                     if placement_type in ['terrain', 'road'] and not align_to_surface:
-                        self._log("  > Disabling surface alignment (keeping original yaw).")
+                        self.logger.info("  > Disabling surface alignment (keeping original yaw).")
                         final_rot = [0.0, initial_yaw, 0.0] # Keep only yaw
                     elif placement_type in ['static_prefab_roof', 'city_roof']:
                         # Roofs are typically flat, keep only yaw regardless of align_to_surface
-                        self._log("  > Setting flat rotation for roof placement.")
+                        self.logger.info("  > Setting flat rotation for roof placement.")
                         final_rot = [0.0, initial_yaw, 0.0] # Keep only yaw
 
 
                 except Exception as e:
-                    self._log(f"Warning: Smart placement failed for unit {uid}: {e}. Falling back.")
+                    self.logger.warning(f"Smart placement failed for unit {uid}: {e}. Falling back.")
                     # Fallback to simple ground placement using get_asset_placement
                     try:
                         placement_info = self.tc.get_asset_placement(x, z, initial_yaw)
@@ -573,17 +578,17 @@ class Mission:
                         final_rot = list(placement_info['rotation'])
                         editor_mode = "Ground"
                         if not align_to_surface:
-                            self._log("  > Disabling surface alignment (Fallback - keeping original yaw).")
+                            self.logger.info("  > Disabling surface alignment (Fallback - keeping original yaw).")
                             final_rot = [0.0, initial_yaw, 0.0]
-                        self._log(f"  > Fallback placement: terrain at {final_pos[1]:.2f}m")
+                        self.logger.info(f"  > Fallback placement: terrain at {final_pos[1]:.2f}m")
                     except Exception as e2:
-                        self._log(f"Warning: Fallback placement failed for unit {uid}: {e2}. Using original Y.")
+                        self.logger.warning(f"Fallback placement failed for unit {uid}: {e2}. Using original Y.")
                         final_pos = initial_pos # Revert to original position
                         final_rot = initial_rot
                         editor_mode = "Air" # Final fallback
 
             else: # Simple ground placement (use_smart_placement is False)
-                self._log(f"Placing unit {uid} ('{unit_obj.unit_name}') on ground (simple) at ({x:.2f}, {z:.2f}).")
+                self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') on ground (simple) at ({x:.2f}, {z:.2f}).")
                 try:
                     # Use get_asset_placement for simple height + optional rotation
                     placement_info = self.tc.get_asset_placement(x, z, initial_yaw)
@@ -591,17 +596,17 @@ class Mission:
                     final_rot = list(placement_info['rotation'])
                     editor_mode = "Ground"
                     if not align_to_surface:
-                        self._log("  > Disabling surface alignment (Simple - keeping original yaw).")
+                        self.logger.info("  > Disabling surface alignment (Simple - keeping original yaw).")
                         final_rot = [0.0, initial_yaw, 0.0] # Keep only yaw
-                    self._log(f"  > Simple placement: terrain at {final_pos[1]:.2f}m")
+                    self.logger.info(f"  > Simple placement: terrain at {final_pos[1]:.2f}m")
                 except Exception as e:
-                    self._log(f"Warning: Simple ground placement failed for unit {uid}: {e}. Using original Y.")
+                    self.logger.warning(f"Simple ground placement failed for unit {uid}: {e}. Using original Y.")
                     final_pos = initial_pos # Revert to original
                     final_rot = initial_rot
                     editor_mode = "Air" # Fallback
 
         elif placement == "sea":
-            self._log(f"Placing unit {uid} ('{unit_obj.unit_name}') on sea at ({x:.2f}, {z:.2f}).")
+            self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') on sea at ({x:.2f}, {z:.2f}).")
             adjusted_y = self.tc.get_terrain_height(x, z)
             final_pos[1] = max(adjusted_y, 0) # Use terrain height but >= 0
             editor_mode = "Water"
@@ -611,14 +616,14 @@ class Mission:
         elif placement == "relative_airborne":
             if altitude_agl is None:
                 raise ValueError("altitude_agl must be provided for placement='relative_airborne'")
-            self._log(f"Placing unit {uid} ('{unit_obj.unit_name}') at {altitude_agl}m AGL above ({x:.2f}, {z:.2f}).")
+            self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') at {altitude_agl}m AGL above ({x:.2f}, {z:.2f}).")
             ground_y = self.tc.get_terrain_height(x, z)
             final_pos[1] = ground_y + altitude_agl
             editor_mode = "Air"
             # Keep original rotation
 
         elif placement == "airborne":
-            self._log(f"Placing unit {uid} ('{unit_obj.unit_name}') airborne at provided coordinates.")
+            self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') airborne at provided coordinates.")
             editor_mode = "Air"
             # Keep original position/rotation
 
@@ -640,7 +645,7 @@ class Mission:
             'spawn_flags': spawn_flags
         }
         self.units.append(unit_data)
-        self._log(f"Unit '{unit_obj.unit_name}' added (ID: {uid}) with final pos: [{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}] rot: [{final_rot[0]:.2f}, {final_rot[1]:.2f}, {final_rot[2]:.2f}] mode: {editor_mode}")
+        self.logger.info(f"Unit '{unit_obj.unit_name}' added (ID: {uid}) with final pos: [{final_pos[0]:.2f}, {final_pos[1]:.2f}, {final_pos[2]:.2f}] rot: [{final_rot[0]:.2f}, {final_rot[1]:.2f}, {final_rot[2]:.2f}] mode: {editor_mode}")
         return uid
     
     def add_path(self, path_obj: Path, path_id: Optional[int] = None) -> str:
@@ -651,7 +656,7 @@ class Mission:
         # Ensure the object has the final ID stored if it has an 'id' field
         if hasattr(path_obj, 'id') and path_obj.id != assigned_id:
              path_obj.id = assigned_id
-        self._log(f"Ruta '{path_obj.name}' added with ID '{assigned_id}'.")
+        self.logger.info(f"Ruta '{path_obj.name}' added with ID '{assigned_id}'.")
         return assigned_id
 
     def add_waypoint(self, waypoint_obj: Waypoint, waypoint_id: Optional[int] = None) -> int:
@@ -661,8 +666,93 @@ class Mission:
         assigned_id = self._get_or_assign_id(waypoint_obj, "_pytol_wpt", waypoint_id)
         if waypoint_obj.id != assigned_id:
             waypoint_obj.id = assigned_id
-        self._log(f"Waypoint '{waypoint_obj.name}' added with ID '{assigned_id}'.")
+        self.logger.info(f"Waypoint '{waypoint_obj.name}' added with ID '{assigned_id}'.")
         return assigned_id
+
+    def add_unit_at_base_spawn(self,
+                                unit_obj: Unit,
+                                base_index: int = 0,
+                                category: str = 'hangar',
+                                spawn_index: int = 0,
+                                base_type: str = None,
+                                mp_select_enabled: bool = True,
+                                spawn_chance: int = 100) -> int:
+        """
+        Add a unit at a specific base spawn point (hangar, helipad, etc.).
+        
+        Note: This is for actual spawn points only (hangar/helipad/bigplane).
+        For placing objectives at reference points (runway/tower/barracks), use
+        select_spawn_point() or get_reference_points() directly.
+        
+        Args:
+            unit_obj: Unit dataclass instance to add
+            base_index: Which base to use (0 = first, 1 = second, etc.)
+            category: Spawn category ('hangar', 'helipad', 'bigplane')
+            spawn_index: Which spawn in category (0 = first, -1 = random)
+            base_type: Optional filter for base type ('airbase1', 'airbase2', 'airbase3')
+            mp_select_enabled: If selectable in multiplayer
+            spawn_chance: Spawn probability (0-100)
+        
+        Returns:
+            Unit instance ID
+            
+        Examples:
+            # Add player at first hangar of first airbase
+            mission.add_unit_at_base_spawn(player_unit, base_index=0, category='hangar', spawn_index=0)
+            
+            # Add unit at random helipad of second airbase
+            mission.add_unit_at_base_spawn(heli_unit, base_index=1, category='helipad', spawn_index=-1)
+            
+            # Add unit at first airbase2 on map
+            mission.add_unit_at_base_spawn(unit, base_type='airbase2', category='hangar')
+            
+        For reference points (objectives/waypoints):
+            from pytol.resources.base_spawn_points import select_spawn_point, get_reference_points
+            
+            # Get runway endpoint for waypoint
+            runway_pos, runway_yaw = select_spawn_point(base, category='runway', index=0)
+            
+            # Get all runway points
+            runways = get_reference_points('airbase1', 'runway')
+        """
+        from pytol.resources.base_spawn_points import select_spawn_point, get_available_bases
+        
+        # Get available bases
+        bases = get_available_bases(self.tc, base_type)
+        
+        if not bases:
+            type_msg = f" of type '{base_type}'" if base_type else ""
+            raise ValueError(f"No bases{type_msg} found on map '{self.map_id}'")
+        
+        # Select base
+        if base_index >= len(bases):
+            self.logger.warning(f"Base index {base_index} out of range (only {len(bases)} bases), using last base")
+            base_index = len(bases) - 1
+        
+        base = bases[base_index]
+        
+        # Get spawn point
+        try:
+            pos, yaw = select_spawn_point(base, category=category, index=spawn_index, fallback_to_center=True)
+        except ValueError as e:
+            self.logger.error(f"Failed to select spawn point: {e}")
+            raise
+        
+        # Update unit position and rotation
+        unit_obj.global_position = list(pos)
+        unit_obj.rotation = [0.0, yaw, 0.0]
+        
+        self.logger.info(f"Placing unit '{unit_obj.unit_name}' at {base.get('prefab_type', 'unknown')} {category} spawn")
+        
+        # Add unit with ground placement (no smart placement since we have exact position)
+        return self.add_unit(
+            unit_obj,
+            placement="ground",
+            use_smart_placement=False,
+            align_to_surface=False,
+            mp_select_enabled=mp_select_enabled,
+            spawn_chance=spawn_chance
+        )
 
     def add_unit_to_group(self, team: str, group_name: str, unit_instance_id: int): # Unchanged
         """Assigns a unit (by its instance ID) to a unit group."""
@@ -676,7 +766,7 @@ class Mission:
             raise TypeError("objective_obj must be an Objective dataclass.")
         # Objective ID is required and comes *from* the object
         assigned_id = self._get_or_assign_id(objective_obj, "_pytol_obj")
-        self._log(f"Objetivo '{objective_obj.name}' (ID: {assigned_id}) tracked.")
+        self.logger.info(f"Objetivo '{objective_obj.name}' (ID: {assigned_id}) tracked.")
         return assigned_id
 
     def add_static_object(self, static_obj: StaticObject) -> int:
@@ -686,7 +776,7 @@ class Mission:
         sid = self._static_object_next_id
         self.static_objects.append(static_obj)
         self._static_object_next_id += 1
-        self._log(f"StaticObject '{static_obj.prefab_id}' added (ID: {sid})")
+        self.logger.info(f"StaticObject '{static_obj.prefab_id}' added (ID: {sid})")
         return sid
 
     def add_trigger_event(self, trigger_obj: Trigger) -> int:
@@ -695,7 +785,7 @@ class Mission:
             raise TypeError("trigger_obj must be a Trigger dataclass.")
         # Trigger ID is required and comes *from* the object
         assigned_id = self._get_or_assign_id(trigger_obj, "_pytol_trig")
-        self._log(f"Trigger '{trigger_obj.name}' (ID: {assigned_id}) tracked.")
+        self.logger.info(f"Trigger '{trigger_obj.name}' (ID: {assigned_id}) tracked.")
         return assigned_id
 
     def add_base(self, base_obj: Base): # Unchanged logic, just type hint
@@ -703,9 +793,9 @@ class Mission:
         if not isinstance(base_obj, Base):
             raise TypeError("base_obj must be a Base dataclass.")
         if any(b.id == base_obj.id for b in self.bases):
-             self._log(f"Warning: Base ID {base_obj.id} already exists.")
+             self.logger.warning(f"Base ID {base_obj.id} already exists.")
         self.bases.append(base_obj)
-        self._log(f"Base '{base_obj.name or base_obj.id}' added (ID: {base_obj.id}).")
+        self.logger.info(f"Base '{base_obj.name or base_obj.id}' added (ID: {base_obj.id}).")
 
     def add_briefing_note(self, note_obj: BriefingNote): # Unchanged logic, just type hint
         """Adds a BriefingNote object."""
@@ -740,7 +830,7 @@ class Mission:
             FileNotFoundError: If the source file doesn't exist
         """
         if res_id in self.resource_manifest:
-            self._log(f"Warning: Overwriting resource with ID {res_id}")
+            self.logger.warning(f"Overwriting resource with ID {res_id}")
         
         # Validate source file exists
         if not os.path.isfile(path):
@@ -757,7 +847,7 @@ class Mission:
             raise TypeError("conditional_obj must be a Conditional dataclass or ConditionalTree.")
         assigned_id = self._get_or_assign_id(conditional_obj, "_pytol_cond", conditional_id)
         # Conditionals don't have an 'id' field in their dataclass
-        self._log(f"Conditional added with ID '{assigned_id}'.")
+        self.logger.info(f"Conditional added with ID '{assigned_id}'.")
         return assigned_id
 
     def add_global_value(self, gv_obj: GlobalValue):
@@ -765,31 +855,31 @@ class Mission:
         if not isinstance(gv_obj, GlobalValue):
             raise TypeError("gv_obj must be a GlobalValue dataclass.")
         if gv_obj.name in self.global_values:
-            self._log(f"Warning: GlobalValue name '{gv_obj.name}' already exists. Overwriting.")
+            self.logger.warning(f"GlobalValue name '{gv_obj.name}' already exists. Overwriting.")
         self.global_values[gv_obj.name] = gv_obj
-        self._log(f"GlobalValue '{gv_obj.name}' added (initial value: {gv_obj.initial_value}).")
+        self.logger.info(f"GlobalValue '{gv_obj.name}' added (initial value: {gv_obj.initial_value}).")
 
     def add_conditional_action(self, ca_obj: ConditionalAction):
         """Adds a ConditionalAction object to the mission."""
         if not isinstance(ca_obj, ConditionalAction):
             raise TypeError("ca_obj must be a ConditionalAction dataclass.")
         if any(ca.id == ca_obj.id for ca in self.conditional_actions):
-            self._log(f"Warning: ConditionalAction ID {ca_obj.id} already exists.")
+            self.logger.warning(f"ConditionalAction ID {ca_obj.id} already exists.")
         # Ensure the linked conditional ID actually exists (optional check)
         if ca_obj.conditional_id not in self.conditionals:
-            self._log(f"Warning: ConditionalAction '{ca_obj.name}' links to non-existent Conditional ID '{ca_obj.conditional_id}'.")
+            self.logger.warning(f"ConditionalAction '{ca_obj.name}' links to non-existent Conditional ID '{ca_obj.conditional_id}'.")
 
         self.conditional_actions.append(ca_obj)
-        self._log(f"ConditionalAction '{ca_obj.name}' added (ID: {ca_obj.id}), linked to Conditional '{ca_obj.conditional_id}'.")
+        self.logger.info(f"ConditionalAction '{ca_obj.name}' added (ID: {ca_obj.id}), linked to Conditional '{ca_obj.conditional_id}'.")
 
     def add_timed_event_group(self, timed_event_group_obj: TimedEventGroup):
         """Adds a TimedEventGroup object to the mission."""
         if not isinstance(timed_event_group_obj, TimedEventGroup):
             raise TypeError("timed_event_group_obj must be a TimedEventGroup dataclass.")
         if any(g.group_id == timed_event_group_obj.group_id for g in self.timed_event_groups):
-            self._log(f"Warning: TimedEventGroup ID {timed_event_group_obj.group_id} already exists.")
+            self.logger.warning(f"TimedEventGroup ID {timed_event_group_obj.group_id} already exists.")
         self.timed_event_groups.append(timed_event_group_obj)
-        self._log(f"TimedEventGroup '{timed_event_group_obj.group_name}' added (ID: {timed_event_group_obj.group_id}).")
+        self.logger.info(f"TimedEventGroup '{timed_event_group_obj.group_name}' added (ID: {timed_event_group_obj.group_id}).")
     
 
     def add_event_sequence(self, seq_obj: EventSequence):
@@ -797,28 +887,28 @@ class Mission:
         if not isinstance(seq_obj, EventSequence):
             raise TypeError("seq_obj must be an EventSequence dataclass.")
         if any(seq.id == seq_obj.id for seq in self.event_sequences):
-            self._log(f"Warning: EventSequence ID {seq_obj.id} already exists.")
+            self.logger.warning(f"EventSequence ID {seq_obj.id} already exists.")
         # Optional: Check linked conditionals within sequence events
         for event in seq_obj.events:
             if isinstance(event.conditional, str) and event.conditional not in self.conditionals:
-                self._log(f"Warning: EventSequence '{seq_obj.sequence_name}' step '{event.node_name}' links to non-existent Conditional ID '{event.conditional}'.")
+                self.logger.warning(f"EventSequence '{seq_obj.sequence_name}' step '{event.node_name}' links to non-existent Conditional ID '{event.conditional}'.")
 
         self.event_sequences.append(seq_obj)
-        self._log(f"EventSequence '{seq_obj.sequence_name}' added (ID: {seq_obj.id}).")
+        self.logger.info(f"EventSequence '{seq_obj.sequence_name}' added (ID: {seq_obj.id}).")
 
     def add_random_event(self, re_obj: RandomEvent):
         """Adds a RandomEvent object (container for actions) to the mission."""
         if not isinstance(re_obj, RandomEvent):
             raise TypeError("re_obj must be a RandomEvent dataclass.")
         if any(re.id == re_obj.id for re in self.random_events):
-            self._log(f"Warning: RandomEvent ID {re_obj.id} already exists.")
+            self.logger.warning(f"RandomEvent ID {re_obj.id} already exists.")
         # Optional: Check linked conditionals within action options
         for action_option in re_obj.action_options:
             if isinstance(action_option.conditional, str) and action_option.conditional not in self.conditionals:
-                self._log(f"Warning: RandomEvent '{re_obj.name}' action ID {action_option.id} links to non-existent Conditional ID '{action_option.conditional}'.")
+                self.logger.warning(f"RandomEvent '{re_obj.name}' action ID {action_option.id} links to non-existent Conditional ID '{action_option.conditional}'.")
 
         self.random_events.append(re_obj)
-        self._log(f"RandomEvent '{re_obj.name}' added (ID: {re_obj.id}).")
+        self.logger.info(f"RandomEvent '{re_obj.name}' added (ID: {re_obj.id}).")
 
     def _format_conditional(self, cond_id: str, cond) -> str:
         """
@@ -855,7 +945,7 @@ class Mission:
         comp_content_lines.append(f"{indent_comp}uiPos = (0, 0, 0)") # <-- ADDED uiPos
 
         if not is_dataclass(cond):
-            self._log(f"Warning: Conditional object {cond_id} is not a dataclass.")
+            self.logger.warning(f"Conditional object {cond_id} is not a dataclass.")
         else:
             for f in fields(cond):
                 if f.name == 'internal_id': continue # Skip internal fields if any
@@ -1184,7 +1274,7 @@ class Mission:
                     # Handle UnitGroup Target ID (using manual integer for now)
                     target_id_val = target.target_id
                     if target.target_type == "UnitGroup" and not isinstance(target.target_id, int):
-                        self._log(f"Warning: targetID for UnitGroup '{target.target_id}' should likely be an integer.")
+                        self.logger.warning(f"targetID for UnitGroup '{target.target_id}' should likely be an integer.")
                         # Attempt conversion, or raise error? For now, format as is.
                         target_id_val = _format_value(target.target_id)
                     elif target.target_type == "Unit":
@@ -1239,7 +1329,7 @@ class Mission:
                     elif isinstance(prereq, int): # Allow passing integer IDs directly
                         prereq_ids.append(prereq)
                     else:
-                        self._log(f"Warning: Invalid type for objective prereq: {type(prereq)}. Skipping.")
+                        self.logger.warning(f"Invalid type for objective prereq: {type(prereq)}. Skipping.")
 
 
             fields_content = "".join([f"\t\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}" for k,v in o.fields.items()])
@@ -1276,16 +1366,16 @@ class Mission:
                         param_info_block += f"\t\t\t\t\t}}{eol}"
                         params_c += param_info_block
 
-                    # Resolve target ID links
-                    target_id_val = target.target_id
-                    if target.target_type == "Unit":
-                         # Ensure target_id is the integer unitInstanceID
-                         if not isinstance(target.target_id, int):
-                              self._log(f"Warning: EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
-                              try:
-                                  target_id_val = int(target.target_id)
-                              except ValueError:
-                                  self._log(f"  > Error: Could not convert Unit target ID to int for objective {o.objective_id}")
+                # Resolve target ID links
+                target_id_val = target.target_id
+                if target.target_type == "Unit":
+                    # Ensure target_id is the integer unitInstanceID
+                    if not isinstance(target.target_id, int):
+                        self.logger.warning(f"EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
+                        try:
+                            target_id_val = int(target.target_id)
+                        except ValueError:
+                            self.logger.error(f"  > Could not convert Unit target ID to int for objective {o.objective_id}")
                     elif target.target_type == "Waypoint" and isinstance(target.target_id, Waypoint):
                          target_id_val = self._get_or_assign_id(target.target_id, "_pytol_wpt")
                     elif target.target_type == "Path" and isinstance(target.target_id, Path):
@@ -1441,7 +1531,7 @@ class Mission:
                          if found_id is not None:
                               param_value = found_id
                          else:
-                              self._log(f"Warning: Could not find unitInstanceID for Unit param value in CondAction {ca.id}")
+                              self.logger.warning(f"Could not find unitInstanceID for Unit param value in CondAction {ca.id}")
                     # TODO: Add checks for Conditional, etc. if actions can use them as param values
 
                     # --- Format ParamInfo block (with ParamAttrInfo) ---
@@ -1469,7 +1559,7 @@ class Mission:
                     if isinstance(target.target_id, GlobalValue):
                         target_id_val = target.target_id.name
                     elif not isinstance(target.target_id, str):
-                        self._log(f"Warning: targetID for GlobalValue should be string name, got {target.target_id}")
+                        self.logger.warning(f"targetID for GlobalValue should be string name, got {target.target_id}")
                         target_id_val = str(target.target_id)
                 elif target.target_type == "Unit":
                     if isinstance(target.target_id, Unit): # If Unit object passed
@@ -1477,13 +1567,13 @@ class Mission:
                          if found_id is not None:
                               target_id_val = found_id
                          else:
-                              self._log(f"Warning: Could not find unitInstanceID for Unit target ID in CondAction {ca.id}")
+                              self.logger.warning(f"Could not find unitInstanceID for Unit target ID in CondAction {ca.id}")
                     elif not isinstance(target.target_id, int): # Ensure it's an int if not an object
-                         self._log(f"Warning: EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
+                         self.logger.warning(f"EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
                          try:
                              target_id_val = int(target.target_id)
                          except ValueError:
-                             self._log(f"  > Error: Could not convert Unit target ID to int for CondAction {ca.id}")
+                             self.logger.error(f"  > Could not convert Unit target ID to int for CondAction {ca.id}")
                 elif target.target_type == "Waypoint":
                     if isinstance(target.target_id, Waypoint):
                         target_id_val = self._get_or_assign_id(target.target_id, "_pytol_wpt")
@@ -1492,7 +1582,7 @@ class Mission:
                          try:
                              target_id_val = int(target_id_val)
                          except ValueError:
-                             self._log(f"Warning: Waypoint target ID should be int, got {target_id_val}")
+                             self.logger.warning(f"Waypoint target ID should be int, got {target_id_val}")
                 elif target.target_type == "Path":
                      if isinstance(target.target_id, Path):
                           target_id_val = self._get_or_assign_id(target.target_id, "_pytol_path")
@@ -1500,12 +1590,12 @@ class Mission:
                          try:
                              target_id_val = int(target_id_val)
                          except ValueError:
-                             self._log(f"Warning: Path target ID should be int, got {target_id_val}")
+                             self.logger.warning(f"Path target ID should be int, got {target_id_val}")
                 elif target.target_type == "Conditional":
                      if isinstance(target.target_id, Conditional):
                           target_id_val = self._get_or_assign_id(target.target_id, "_pytol_cond") # Ensure added, get ID
                      elif not isinstance(target_id_val, str):
-                          self._log(f"Warning: Conditional target ID should be string, got {target_id_val}")
+                          self.logger.warning(f"Conditional target ID should be string, got {target_id_val}")
                           target_id_val = str(target_id_val)
                 # TODO: Add resolutions for Timed_Events, UnitGroup, System etc. if needed
                 # --- End Target ID Resolution ---
@@ -1556,7 +1646,7 @@ class Mission:
                             if found_id is not None:
                                 param_value = found_id
                             else:
-                                self._log(f"Warning: Could not find unitInstanceID for Unit param value in RandomEvent {re.id}, Action {action.id}")
+                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in RandomEvent {re.id}, Action {action.id}")
                         # Format ParamInfo (with ParamAttrInfo)
                         # Convert list values to semicolon format (e.g., [2] -> "2;")
                         formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
@@ -1588,12 +1678,12 @@ class Mission:
                               if found_id is not None:
                                   target_id_val = found_id
                               else:
-                                  self._log(f"Warning: Could not find unitInstanceID for Unit target ID in RandomEvent {re.id}, Action {action.id}")
+                                  self.logger.warning(f"Could not find unitInstanceID for Unit target ID in RandomEvent {re.id}, Action {action.id}")
                          elif not isinstance(target.target_id, int):
                               try:
                                   target_id_val = int(target.target_id)
                               except ValueError:
-                                  self._log(f"Warning: Unit target ID not int for RandomEvent {re.id}, Action {action.id}")
+                                  self.logger.warning(f"Unit target ID not int for RandomEvent {re.id}, Action {action.id}")
                     # ... etc. for Waypoint, Path, Conditional ...
 
                     # Format EventTarget
@@ -1617,12 +1707,12 @@ class Mission:
                      elif isinstance(action.conditional, str):
                           action_cond_id_val_str = action.conditional
                           if action_cond_id_val_str not in self.conditionals:
-                               self._log(f"Warning: RandomEvent Action {action.id} uses unknown conditional ID '{action_cond_id_val_str}'")
+                               self.logger.warning(f"RandomEvent Action {action.id} uses unknown conditional ID '{action_cond_id_val_str}'")
                      else: # Allow integer 0
                           try:
                               action_cond_id_val_str = str(int(action.conditional))
                           except ValueError:
-                              self._log(f"Warning: Invalid conditional link '{action.conditional}' in RandomEvent Action.")
+                              self.logger.warning(f"Invalid conditional link '{action.conditional}' in RandomEvent Action.")
                 
                 # Format the nested CONDITIONAL block inside ACTION
                 # This is always just a placeholder with id = 0 and no COMP blocks
@@ -1673,7 +1763,7 @@ class Mission:
                             if found_id is not None:
                                 param_value = found_id
                             else:
-                                self._log(f"Warning: Could not find unitInstanceID for Unit param value in EventSequence {seq.id}")
+                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in EventSequence {seq.id}")
                         # Format ParamInfo (with ParamAttrInfo)
                         # Convert list values to semicolon format (e.g., [2] -> "2;")
                         formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
@@ -1714,7 +1804,7 @@ class Mission:
                          try:
                              cond_id_val_str = str(int(event.conditional))
                          except ValueError:
-                             self._log(f"Warning: Invalid conditional link '{event.conditional}' in sequence event.")
+                             self.logger.warning(f"Invalid conditional link '{event.conditional}' in sequence event.")
                 # Format EVENT block
                 events_c += f"\t\t\tEVENT{eol}\t\t\t{{{eol}" \
                             f"\t\t\t\tconditional = {cond_id_val_str}{eol}" \
@@ -1863,7 +1953,7 @@ class Mission:
         with open(path, "wb") as f:
             f.write(vts.encode("utf-8"))
 
-        self._log(f"✅ Mission saved '{path}' (UTF-8 no BOM, LF line endings)")
+        self.logger.info(f"✅ Mission saved '{path}' (UTF-8 no BOM, LF line endings)")
 
     def save_mission(self, base_path: str) -> str:
         """
@@ -1890,7 +1980,7 @@ class Mission:
                 elif ext in ['.png', '.jpg', '.jpeg', '.bmp']:
                     subdir = 'images'
                 else:
-                    self._log(f"Warning: Unknown resource file extension '{ext}' for resource {res_id}")
+                    self.logger.warning(f"Unknown resource file extension '{ext}' for resource {res_id}")
                     subdir = 'resources'
                 
                 # Create subdirectory
@@ -1906,9 +1996,9 @@ class Mission:
                     # Update manifest to relative path
                     relative_path = f"{subdir}/{filename}"
                     self.resource_manifest[res_id] = relative_path
-                    self._log(f"✅ Copied resource {res_id}: {filename} → {relative_path}")
+                    self.logger.info(f"✅ Copied resource {res_id}: {filename} → {relative_path}")
                 except Exception as e:
-                    self._log(f"❌ Error copying resource {res_id} from '{source_path}': {e}")
+                    self.logger.info(f"❌ Error copying resource {res_id} from '{source_path}': {e}")
         
         vts_path = os.path.join(mission_dir, f"{self.scenario_id}.vts")
         self._save_to_file(vts_path)

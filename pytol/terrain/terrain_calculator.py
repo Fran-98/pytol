@@ -14,6 +14,7 @@ from scipy.spatial.transform import Rotation as R
 
 from ..parsers.vtm_parser import parse_vtol_data
 from ..resources.resources import get_city_layout_database, get_prefab_database, get_noise_image
+from ..misc.logger import create_logger
 
 # --- City layout center offset (meters) ---
 # Empirically aligns procedural city placements with in-game meshes
@@ -71,18 +72,28 @@ class TerrainCalculator:
 
     def __init__(self, map_name: str = '', map_directory_path: str = '', vtol_directory: str = '', verbose: bool = True):
         """Initializes the TerrainCalculator by loading all necessary data."""
-
         self.verbose = verbose
+        # Centralized logger
+        self.logger = create_logger(verbose=verbose, name="TerrainCalculator")
         
         if map_directory_path:
             self.map_dir = map_directory_path
             self.map_name = os.path.basename(os.path.normpath(map_directory_path))
         elif map_name and vtol_directory:
             self.map_dir = os.path.join(os.path.normpath(vtol_directory), 'CustomMaps', map_name)
+            self.map_name = map_name
         elif map_name and os.getenv('VTOL_VR_DIR'):
             self.map_dir = os.path.join(os.path.normpath(os.getenv('VTOL_VR_DIR')), 'CustomMaps', map_name)
+            self.map_name = map_name
         else:
             raise ValueError("Either 'map_directory_path' or both 'map_name' and 'vtol_directory' must be provided.")
+        
+        # Check for known incompatible maps
+        if hasattr(self, 'map_name') and self.map_name == 'afMtnsHills':
+            raise ValueError(
+                "Map 'afMtnsHills' has known compatibility issues with pytol and cannot be loaded.\n"
+                "Please try a different map."
+            )
         
         self._log(f"Initializing TerrainCalculator for: {self.map_dir}")
 
@@ -114,9 +125,15 @@ class TerrainCalculator:
         self._log(f"Using Coordinate Transform Mode = {self.coord_transform_mode}")
 
     def _log(self, message: str):
-        """Print message if verbose mode is enabled."""
-        if self.verbose:
-            print(message)
+        """Route messages through centralized logger with simple level detection."""
+        msg = str(message).lstrip()
+        lower = msg.lower()
+        if lower.startswith("warning") or msg.startswith("⚠"):
+            self.logger.warning(msg)
+        elif lower.startswith("error") or lower.startswith("fatal"):
+            self.logger.error(msg)
+        else:
+            self.logger.info(msg)
 
     def _load_vtm_file(self, map_directory_path):
         vtm_filename = os.path.basename(os.path.normpath(map_directory_path)) + ".vtm"
@@ -587,9 +604,9 @@ class TerrainCalculator:
                         self._log(f"Coordinate transform mode forced via env: {mode_val}")
                         return
                     else:
-                        self._log(f"Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (out of range 0..7)")
+                        self._log(f"Warning: Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (out of range 0..7)")
                 except ValueError:
-                    self._log(f"Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (not an int)")
+                    self._log(f"Warning: Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (not an int)")
 
             prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
             if not isinstance(prefabs_node, list):
@@ -1189,51 +1206,51 @@ if __name__ == "__main__":
         calculator = TerrainCalculator(MAP_FOLDER, LAYOUT_DB_PATH, INDIVIDUAL_DB_PATH)
 
         # --- Generate and save all city blocks ---
-        self._log("\nGetting pre-processed city block data...")
+        print("\nGetting pre-processed city block data...")
         generated_blocks_data = calculator.get_all_city_blocks()
         with open(OUTPUT_CITY_JSON, 'w') as f:
             json.dump(generated_blocks_data, f, indent=2)
-        self._log(f"Saved data for {len(generated_blocks_data)} city blocks to '{OUTPUT_CITY_JSON}'")
+        print(f"Saved data for {len(generated_blocks_data)} city blocks to '{OUTPUT_CITY_JSON}'")
         
         # --- Generate and save all static prefabs ---
-        self._log("\nGetting pre-processed static prefab data...")
+        print("\nGetting pre-processed static prefab data...")
         generated_static_data = calculator.get_all_static_prefabs()
         with open(OUTPUT_STATIC_JSON, 'w') as f:
             json.dump(generated_static_data, f, indent=2)
-        self._log(f"Saved data for {len(generated_static_data)} static prefabs to '{OUTPUT_STATIC_JSON}'")
+        print(f"Saved data for {len(generated_static_data)} static prefabs to '{OUTPUT_STATIC_JSON}'")
 
         # --- Test get_smart_placement on various locations ---
         if generated_static_data:
-            self._log("\n--- Testing get_smart_placement ---")
+            print("\n--- Testing get_smart_placement ---")
             
             # Test 1: On a known static prefab
             first_static = generated_static_data[0]
             test_pos = first_static['position']
             test_x, test_z = test_pos[0], test_pos[2]
-            self._log(f"\nQuerying at static prefab location: ({test_x:.2f}, {test_z:.2f})")
+            print(f"\nQuerying at static prefab location: ({test_x:.2f}, {test_z:.2f})")
             placement = calculator.get_smart_placement(test_x, test_z, 0)
-            self._log(f" -> Result Type: {placement.get('type')}")
+            print(f" -> Result Type: {placement.get('type')}")
             if placement.get('type') == 'static_prefab_roof':
-                self._log("    SUCCESS! Correctly detected a static prefab roof.")
+                print("    SUCCESS! Correctly detected a static prefab roof.")
             else:
-                self._log(f"   WARNING! Expected 'static_prefab_roof', but got '{placement.get('type')}'.")
+                print(f"   WARNING! Expected 'static_prefab_roof', but got '{placement.get('type')}'.")
             
             # Test 2: On a known road
             road_test_x, road_test_z = 53750.0, 118750.0
-            self._log(f"\nQuerying at road location: ({road_test_x:.2f}, {road_test_z:.2f})")
+            print(f"\nQuerying at road location: ({road_test_x:.2f}, {road_test_z:.2f})")
             placement = calculator.get_smart_placement(road_test_x, road_test_z, 0)
-            self._log(f" -> Result Type: {placement.get('type')}")
+            print(f" -> Result Type: {placement.get('type')}")
             if placement.get('type') == 'road':
-                self._log("    SUCCESS! Correctly detected a road.")
+                print("    SUCCESS! Correctly detected a road.")
             else:
-                self._log(f"   WARNING! Expected 'road', but got '{placement.get('type')}'.")
+                print(f"   WARNING! Expected 'road', but got '{placement.get('type')}'.")
 
     except FileNotFoundError as e:
-        self._log(f"\nFile Error: {e}")
+        print(f"\nFile Error: {e}")
     except ValueError as e:
-        self._log(f"\nValue Error: {e}")
+        print(f"\nValue Error: {e}")
     except Exception as e:
-        self._log(f"\nAn unexpected error occurred: {e}")
+        print(f"\nAn unexpected error occurred: {e}")
         traceback.print_exc()
 
 

@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field, fields
 from typing import List, Optional, Union, Dict, Any, cast, Literal
 from ..classes.mission_objects import Waypoint, EventTarget
+from ..misc.logger import create_logger
+
+_logger = create_logger(verbose=False, name="Objectives")
 
 @dataclass
 class Objective:
@@ -57,7 +60,7 @@ class Objective:
                 delattr(self, f_name)
             except AttributeError:
                 # Should not happen if hasattr was true, but added for safety
-                print(f"Warning: Could not delete attribute '{f_name}' during __post_init__ for {subclass_name}.")
+                _logger.warning(f"Could not delete attribute '{f_name}' during __post_init__ for {subclass_name}.")
 
 # This helper dict stores the field names for each class,
 # used by the base class's __post_init__
@@ -342,7 +345,7 @@ def create_objective(
         return cast("Objective", instance)
 
     except TypeError as e:
-        print(f"Error during instance creation in create_objective: {e}")
-        print(f"Class: {ClassToCreate.__name__}")
-        print(f"All Args Passed: {all_args}")
+        _logger.error(f"Error during instance creation in create_objective: {e}")
+        _logger.error(f"Class: {ClassToCreate.__name__}")
+        _logger.error(f"All Args Passed: {all_args}")
         raise e

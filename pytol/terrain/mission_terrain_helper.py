@@ -9,6 +9,7 @@ import traceback
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
 from .terrain_calculator import TerrainCalculator
+from ..misc.logger import create_logger
 
 class MissionTerrainHelper:
     """
@@ -29,14 +30,21 @@ class MissionTerrainHelper:
             raise TypeError("The provided argument must be an instance of TerrainCalculator.")
         self.tc = terrain_calculator
         self.verbose = verbose if verbose is not None else terrain_calculator.verbose
+        self.logger = create_logger(verbose=self.verbose, name="MissionTerrainHelper")
         self._bridges = None
         self._pois_cache = None
         self._log("MissionTerrainHelper initialized.")
     
     def _log(self, message: str):
-        """Print message if verbose mode is enabled."""
-        if self.verbose:
-            print(message)
+        """Route messages through centralized logger with simple level detection."""
+        msg = str(message).lstrip()
+        lower = msg.lower()
+        if lower.startswith("warning") or msg.startswith("⚠"):
+            self.logger.warning(msg)
+        elif lower.startswith("error") or lower.startswith("fatal"):
+            self.logger.error(msg)
+        else:
+            self.logger.info(msg)
 
     # --- Core Terrain and Objects queries ---
 
