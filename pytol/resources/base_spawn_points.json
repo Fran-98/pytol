@@ -1,0 +1,672 @@
+{
+  "airbase1": [
+    {
+      "name": "Hbase1",
+      "offset": [
+        80.34319305419922,
+        872.4686737060547
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase1",
+      "offset": [
+        81.38133239746094,
+        815.5546226501465
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase1",
+      "offset": [
+        23.40503692626953,
+        872.8905639648438
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase1",
+      "offset": [
+        23.291969299316406,
+        815.7380905151367
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        44.696533203125,
+        612.7864990234375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        40.83984375,
+        409.7108154296875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        43.467926025390625,
+        63.08575439453125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        40.43963623046875,
+        -167.25732421875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        38.280120849609375,
+        -369.9212646484375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        37.647979736328125,
+        -573.7311096191406
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        38.568450927734375,
+        -956.2991333007812
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        40.467559814453125,
+        -1158.8268432617188
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        34.912384033203125,
+        -1388.786376953125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -93.0255126953125,
+        -640.967529296875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -234.43304443359375,
+        -505.8017578125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -260.85650634765625,
+        -351.28187561035156
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -264.32232666015625,
+        -194.9181671142578
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -239.75408935546875,
+        -39.402801513671875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase1",
+      "offset": [
+        -101.32986450195312,
+        97.036376953125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        715.0225830078125,
+        -1453.3265991210938
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        716.2285766601562,
+        -1245.574462890625
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        711.6514892578125,
+        -1031.4371948242188
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        731.7931213378906,
+        -477.1781120300293
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        731.3738403320312,
+        -272.3521728515625
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase1",
+      "offset": [
+        731.8939208984375,
+        -56.657958984375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runwaystartbase1",
+      "offset": [
+        378.9224853515625,
+        1398.6041259765625
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runwaystartbase1",
+      "offset": [
+        379.31292724609375,
+        -1633.5900268554688
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Controltowerbase1",
+      "offset": [
+        21.671630859375,
+        1091.6553344726562
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "NearBarracksbase1",
+      "offset": [
+        133.0729522705078,
+        1048.1556396484375
+      ],
+      "yaw_offset": 0.0
+    }
+  ],
+  "airbase2": [
+    {
+      "name": "Runwaystartbase2",
+      "offset": [
+        -0.2587456703186035,
+        1261.6005859375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runwaystartbase2",
+      "offset": [
+        -0.5127277374267578,
+        -1203.9593505859375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -338.7878723144531,
+        366.50738525390625
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -334.5347595214844,
+        174.3103485107422
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -344.9639587402344,
+        -21.7044677734375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -344.7802429199219,
+        -209.49090576171875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -338.7841796875,
+        -401.9090881347656
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -341.3741149902344,
+        -593.4390869140625
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -345.8888244628906,
+        -790.2888793945312
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase2",
+      "offset": [
+        -349.6424560546875,
+        -979.5402221679688
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        357.2226257324219,
+        -624.8335590362549
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        352.4319152832031,
+        -840.4336547851562
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        353.56805419921875,
+        -1048.86474609375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "NearBarracksbase2",
+      "offset": [
+        -226.1319580078125,
+        1151.0770263671875
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Controltowerbase2",
+      "offset": [
+        -355.15313720703125,
+        1205.7386474609375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -251.13065338134766,
+        722.9728088378906
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -307.1357137411833,
+        722.5181579589844
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -308.1903443336487,
+        559.321533203125
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -251.87944793701172,
+        559.1511840820312
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -249.40949630737305,
+        665.3804016113281
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -307.4862148165703,
+        665.83349609375
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -308.5211580991745,
+        502.5999298095703
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase2",
+      "offset": [
+        -250.2404327392578,
+        502.60206604003906
+      ],
+      "yaw_offset": 0.0
+    }
+  ],
+  "airbase3": [
+    {
+      "name": "Runway1startbase3",
+      "offset": [
+        -395.0596237182617,
+        -1687.8787841796875
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runway1startbase3",
+      "offset": [
+        -395.39349365234375,
+        1343.2056884765625
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runway2startbase3",
+      "offset": [
+        1502.8226318359375,
+        -564.6705322265625
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Runway2startbase3",
+      "offset": [
+        -815.7455444335938,
+        -1408.1443481445312
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        349.52276611328125,
+        261.581298828125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        404.352294921875,
+        294.79571533203125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        458.92156982421875,
+        326.3887939453125
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        365.25225830078125,
+        492.289306640625
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        310.795654296875,
+        462.30096435546875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        257.12677001953125,
+        432.76025390625
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        204.45989990234375,
+        397.968505859375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        149.68829345703125,
+        365.81396484375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        82.11114501953125,
+        569.3406982421875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        20.66827392578125,
+        679.431396484375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        199.73065185546875,
+        781.253662109375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        258.14215087890625,
+        669.6243896484375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        87.842529296875,
+        105.99212646484375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        121.86566162109375,
+        53.13934326171875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        157.53863525390625,
+        -1.33709716796875
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "Hangarbase3",
+      "offset": [
+        180.7586669921875,
+        -56.70159912109375
+      ],
+      "yaw_offset": 90.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        428.05303955078125,
+        -386.73944091796875
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        375.20086669921875,
+        -282.8096008300781
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "BigPlaneSpawnbase2",
+      "offset": [
+        319.98040771484375,
+        -177.70248413085938
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        271.82110595703125,
+        83.481689453125
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        235.378662109375,
+        62.865272521972656
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        184.14674377441406,
+        151.5941925048828
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        219.72967529296875,
+        172.62814331054688
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        530.3749389648438,
+        235.0272216796875
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Hbase3",
+      "offset": [
+        509.1564636230469,
+        270.7636413574219
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "Controltowerbase3",
+      "offset": [
+        591.4241027832031,
+        133.4080810546875
+      ],
+      "yaw_offset": 0.0
+    },
+    {
+      "name": "NearBarracksbase3",
+      "offset": [
+        549.1873168945312,
+        141.14495849609375
+      ],
+      "yaw_offset": 0.0
+    }
+  ]
+}

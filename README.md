@@ -34,6 +34,7 @@ This enables automation in mission creation, allowing for more dynamic and compl
 * **Terrain Analysis**: Accurately calculate height and surface normals based on map heightmaps.
 * **Object Processing**: Identify and process procedural cities, roads, and static prefabs placed in the map editor.
 * **Smart Placement**: Place units correctly on terrain, roads, or building rooftops.
+* **Base Spawn Points**: Database of precise hangar, helipad, and facility locations for airbase prefabs - works on any map with these bases.
 * **Tactical Queries**: High-level functions to find locations based on mission needs (e.g., line-of-sight checks, hidden spots, flat areas, choke points).
 * **Pathfinding**: Generate road paths, terrain-following flight paths, and covert insertion routes.
 * **Formation Generation**: Create points for standard unit formations (line, wedge, circle).

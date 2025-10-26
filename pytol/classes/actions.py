@@ -13,7 +13,7 @@ class AIAWACSSpawnActions:
     """Actions callable on AIAWACSSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIAWACSSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_designated_targets(self, targets: List[str]) -> EventTarget:
         """Adds units to the AI pilot's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."""
@@ -250,7 +250,7 @@ class AIAirTankerSpawnActions:
     """Actions callable on AIAirTankerSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIAirTankerSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_designated_targets(self, targets: List[str]) -> EventTarget:
         """Adds units to the AI pilot's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."""
@@ -477,7 +477,7 @@ class AIAircraftSpawnActions:
     """Actions callable on AIAircraftSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIAircraftSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_designated_targets(self, targets: List[str]) -> EventTarget:
         """Adds units to the AI pilot's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."""
@@ -704,7 +704,7 @@ class AICarrierSpawnActions:
     """Actions callable on AICarrierSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AICarrierSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -794,7 +794,7 @@ class AIDecoyLauncherSpawnActions:
     """Actions callable on AIDecoyLauncherSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIDecoyLauncherSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -881,7 +881,7 @@ class AIDecoyRadarSpawnActions:
     """Actions callable on AIDecoyRadarSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIDecoyRadarSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -953,7 +953,7 @@ class AIDroneCarrierSpawnActions:
     """Actions callable on AIDroneCarrierSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIDroneCarrierSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1043,7 +1043,7 @@ class AIFixedSAMSpawnActions:
     """Actions callable on AIFixedSAMSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIFixedSAMSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1166,7 +1166,7 @@ class AIGroundECMSpawnActions:
     """Actions callable on AIGroundECMSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIGroundECMSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1293,7 +1293,7 @@ class AIGroundMWSSpawnActions:
     """Actions callable on AIGroundMWSSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIGroundMWSSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1403,7 +1403,7 @@ class AIJTACSpawnActions:
     """Actions callable on AIJTACSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIJTACSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1533,7 +1533,7 @@ class AILockingRadarSpawnActions:
     """Actions callable on AILockingRadarSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AILockingRadarSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1643,7 +1643,7 @@ class AIMissileSiloActions:
     """Actions callable on AIMissileSilo."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIMissileSilo" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1719,7 +1719,7 @@ class AISeaUnitSpawnActions:
     """Actions callable on AISeaUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AISeaUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1805,7 +1805,7 @@ class AIUnitSpawnActions:
     """Actions callable on AIUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1877,7 +1877,7 @@ class AIUnitSpawnEquippableActions:
     """Actions callable on AIUnitSpawnEquippable."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "AIUnitSpawnEquippable" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -1949,7 +1949,7 @@ class APCUnitSpawnActions:
     """Actions callable on APCUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "APCUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -2072,7 +2072,7 @@ class ArtilleryUnitSpawnActions:
     """Actions callable on ArtilleryUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "ArtilleryUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -2205,7 +2205,7 @@ class GroundUnitSpawnActions:
     """Actions callable on GroundUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "GroundUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -2315,7 +2315,7 @@ class IFVSpawnActions:
     """Actions callable on IFVSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "IFVSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""
@@ -2443,7 +2443,7 @@ class MultiplayerSpawnActions:
     """Actions callable on MultiplayerSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "MultiplayerSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_funds(self) -> EventTarget:
         """Add funds to this slot's equipment budget.  If budget mode is Team, funds apply to whole team."""
@@ -2513,7 +2513,7 @@ class PlayerSpawnActions:
     """Actions callable on PlayerSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "PlayerSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def destroy_vehicle(self) -> EventTarget:
         """Destroy the player's aircraft without killing the pilot."""
@@ -2543,7 +2543,7 @@ class RearmingUnitSpawnActions:
     """Actions callable on RearmingUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "RearmingUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def set_enabled(self, e: bool) -> EventTarget:
         """Enable or disable the rearming point."""
@@ -2560,7 +2560,7 @@ class RocketArtilleryUnitSpawnActions:
     """Actions callable on RocketArtilleryUnitSpawn."""
     def __init__(self, target_id: Any):
         self.target_id = target_id
-        self.target_type = "RocketArtilleryUnitSpawn" # TODO: This may need adjustment depending on VTS format
+        self.target_type = "Unit"  # Targeting unit spawners
 
     def add_non_targets(self, non_targets: List[str]) -> EventTarget:
         """Add units to the list of units that this unit will not attack."""

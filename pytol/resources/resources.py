@@ -2,6 +2,9 @@ import json
 from importlib import resources
 from PIL import Image
 from pathlib import Path
+from ..misc.logger import create_logger
+
+_logger = create_logger(verbose=False, name="Resources")
 
 PACKAGE_NAME_WITH_RESOURCES = 'pytol.resources'
 CITY_LAYOUT_DB = 'city_layouts_database.json'
@@ -18,7 +21,7 @@ def load_json_data(file_name: str = 'data.json') -> dict:
         return json.loads(data)
     except Exception as e:
         # Handle exceptions gracefully
-        print(f"Warning: Could not load JSON data from {file_name}: {e}")
+        _logger.warning(f"Could not load JSON data from {file_name}: {e}")
         return {}
 
 def load_image_asset(file_name: str = 'noise.png'):
@@ -31,7 +34,7 @@ def load_image_asset(file_name: str = 'noise.png'):
             img.load()  # Ensure the image is fully loaded
             return img
     except FileNotFoundError:
-        print(f"Warning: Image asset {file_name} not found.")
+        _logger.warning(f"Image asset {file_name} not found.")
         return None
 
 def get_city_layout_database():

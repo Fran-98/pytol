@@ -7,6 +7,7 @@ which group multiple missions together and enable multiplayer scenarios.
 
 from typing import List, Optional
 from pathlib import Path
+from ..misc.logger import create_logger
 
 
 class Campaign:
@@ -56,6 +57,7 @@ class Campaign:
         self.vehicle = vehicle
         self.multiplayer = multiplayer
         self.verbose = verbose
+        self.logger = create_logger(verbose=verbose, name="Campaign")
         
         # Equipment list - default to common equipment
         self.starting_equips: List[str] = []
@@ -68,9 +70,15 @@ class Campaign:
         self.missions: List = []
     
     def _log(self, message: str):
-        """Print a message if verbose mode is enabled."""
-        if self.verbose:
-            print(message)
+        """Route messages through centralized logger with simple level detection."""
+        msg = str(message).lstrip()
+        lower = msg.lower()
+        if lower.startswith("warning") or msg.startswith("⚠"):
+            self.logger.warning(msg)
+        elif lower.startswith("error") or lower.startswith("fatal"):
+            self.logger.error(msg)
+        else:
+            self.logger.info(msg)
     
     def add_mission(self, mission):
         """

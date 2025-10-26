@@ -8,8 +8,10 @@ generated_city_blocks.json
 generated_static_prefabs.json
 test_campaings
 test_ideas
+tools
 *.venv*
-
+CODEBASE_REVIEW.md
+BACKLOG.md
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

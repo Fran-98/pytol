@@ -24,6 +24,9 @@ from pytol.classes.actions import (
     PlayerSpawnActions
     
 )
+from ..misc.logger import create_logger
+
+_logger = create_logger(verbose=False, name="Units")
 
 @dataclass
 class Unit:
@@ -96,7 +99,7 @@ class Unit:
                 # if f_name in self.unit_fields:
                 delattr(self, f_name)
             except AttributeError:
-                 print(f"Warning: Could not delete attribute '{f_name}' during __post_init__ for {self.__class__.__name__}.")
+                _logger.warning(f"Could not delete attribute '{f_name}' during __post_init__ for {self.__class__.__name__}.")
     
 # This helper dict stores the field names for each class,
 # used by the base class's __post_init__
