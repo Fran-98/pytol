@@ -50,6 +50,16 @@ from .resources.equipment import (
     InvalidLoadoutError
 )
 
+# --- Base Spawn Points ---
+from .resources.base_spawn_points import (
+    get_available_bases,
+    select_spawn_point,
+    get_spawn_points,
+    get_reference_points,
+    compute_world_from_base,
+    get_spawn_by_category
+)
+
 from .misc.logger import create_logger
 _logger = create_logger(verbose=False, name="pytol")
 _logger.info(f"Pytol {__version__} loaded.")

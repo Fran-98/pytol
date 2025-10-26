@@ -285,6 +285,7 @@ except Exception as e:
   
   * **Key Methods:**
       * `add_unit(...)`: Adds a unit spawner.
+      * `add_unit_at_base_spawn(...)`: Adds a unit at precise airbase spawn points (hangars, helipads).
       * `add_path(...)`: Defines a path.
       * `add_waypoint(...)`: Defines a waypoint.
       * `add_unit_to_group(...)`: Assigns a unit to a team group.
@@ -370,18 +371,14 @@ If you'd like to support the project financially, you can help cover development
 -----
 ## Known Issues
 
-- Terrain around airbases need to be adjusted as they deform terrain. Will be implemented soon
-- Need to pay attention to the terrain around cities as some city blocks deform terrain. Similar problem as airbases.
-- Pytol need to get bases from the map data, have to put them manually.
+- Need to pay attention to the terrain around cities as some city blocks deform terrain.
+- Height sampling may have small discrepancies (~1-3m) compared to Unity's terrain mesh on steep slopes.
 
 ### Not issues but pending
-- Add static prefab to mission.
-- Handle the complex events and objectives system.
 - Support weather presets.
 - Support OBJECTIVES_OPFOR.
 - Support to add imgs and that kind of stuff to the briefing.
-- Support to higher level implementation of things like mission templates and auto mission generation.
-- Support to replay reading. (will be useful to make stateful campaings or a campaing engine)
+- Support to replay reading. (will be useful to make stateful campaigns or a campaign engine)
 -----
 ## License
 

@@ -1,8 +1,8 @@
-# Procedural Mission Engine (scaffold)
+# Procedural Mission Engine
 
-This package introduces typed, modular building blocks for terrain-aware procedural mission generation while keeping a clean contract for a future dynamic campaign engine.
+This package provides complete procedural mission generation with terrain-aware unit placement, intelligent objectives, and player spawning at airbases. It generates fully playable missions ready for VTOL VR.
 
-Status: scaffolding only (no unit placement yet). It returns a Mission object with environment/time defaults applied so you can integrate it with the existing mission/campaign workflow.
+The engine creates missions with route planning, enemy unit placement, mission-specific objectives, and automatic player spawning using the Base Spawn Points system.
 
 ## API
 
