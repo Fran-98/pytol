@@ -319,7 +319,7 @@ HOW TO USE THIS REFERENCE FOR DEVELOPMENT:
    - Update Section 11 (Code Quality) with any consolidations
 
 
-🤖 FOR AI ASSISTANTS (Like Me!):
+🤖 FOR AI ASSISTANTS:
 ---------------------------------
 1. **Always Check This File First:**
    - Before suggesting new utility functions, search this file
@@ -927,6 +927,40 @@ conditionals = data.get('conditionals', [])
 
 # Save modified scenario:
 vts_parser.save_vts("path/to/output.vts", data)
+
+
+Weather Presets (Custom):
+------------------------
+from pytol import Mission, WeatherPreset
+
+# Create mission and add a custom weather preset (ids 0-7 are built-ins; use 8+):
+mission = Mission(
+    scenario_name="Test Weather",
+    scenario_id="test_weather",
+    description="Demo mission with custom weather",
+    vehicle="AV-42C",
+    map_id="hMap2",
+    vtol_directory="C:/Program Files (x86)/Steam/steamapps/common/VTOL VR"
+)
+wp = WeatherPreset(
+    id=8,
+    preset_name="Red Fog",
+    cloud_plane_altitude=1500,
+    cloudiness=0.0,
+    macro_cloudiness=0.0,
+    cirrus=0.5,
+    stratocumulus=0.0,
+    precipitation=0.0,
+    lightning_chance=0.0,
+    fog_density=0.65,
+    fog_color=(1, 0, 0, 1),
+    fog_height=1.0,
+    fog_falloff=1000.0,
+    cloud_density=0.0,
+)
+mission.add_weather_preset(wp)
+mission.set_default_weather(8)
+mission.save_mission("./out")
 
 
 Unit Classes:

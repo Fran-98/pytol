@@ -17,7 +17,7 @@ from pytol.classes.mission_objects import (
     Waypoint, StaticObject, Base, BriefingNote,
     TimedEventGroup, TimedEventInfo, GlobalValue, 
     ConditionalAction, EventSequence, SequenceEvent,
-    RandomEvent
+    RandomEvent, WeatherPreset
 )
 from pytol.classes.actions import GlobalValueActions
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
@@ -165,6 +165,9 @@ class Mission:
         self.qs_mode = "Anywhere"
         self.qs_limit = -1
 
+        # Weather presets (custom)
+        self.weather_presets: List[WeatherPreset] = []
+
         # --- Mission Data Lists/Dicts ---
         self.units: List[Dict] = [] # Stores dicts: {'unit_obj': Unit, 'unitInstanceID': int, ...}
         self.paths: List[Path] = []
@@ -202,6 +205,477 @@ class Mission:
 
         self.event_sequences: List[EventSequence] = []
         self.random_events: List[RandomEvent] = []
+
+    # ========== Validation Methods ==========
+
+    def _parse_semicolon_int_list(self, value: Optional[Union[str, int, List[int]]]) -> List[int]:
+        """Parse a semicolon-delimited string like "1;2;" into a list of ints.
+        Accepts ints or lists of ints pass-through. Returns [] on None/empty.
+        """
+        if value is None:
+            return []
+        if isinstance(value, list):
+            out: List[int] = []
+            for v in value:
+                try:
+                    out.append(int(v))
+                except Exception:
+                    continue
+            return out
+        if isinstance(value, int):
+            return [value]
+        if isinstance(value, str):
+            items = [s.strip() for s in value.split(';') if s.strip()]
+            out: List[int] = []
+            for s in items:
+                try:
+                    out.append(int(s))
+                except Exception:
+                    # ignore non-numeric pieces
+                    pass
+            return out
+        return []
+
+    def validate_destroy_objectives(self) -> List[str]:
+        """Validate Destroy objectives against known engine pitfalls.
+
+        Returns a list of human-readable warning strings. Non-empty list means
+        there are potential issues that could make the mission misleading or
+        unwinnable in practice.
+        """
+        warnings: List[str] = []
+
+        # Build a lookup for unit instance data
+        unit_by_id: Dict[int, Dict[str, Any]] = {}
+        for u in self.units:
+            try:
+                unit_by_id[int(u.get('unitInstanceID'))] = u
+            except Exception:
+                continue
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) != 'Destroy':
+                continue
+
+            # Extract targets and min_required from objective fields
+            targets_value = obj.fields.get('targets') or obj.fields.get('Targets')
+            target_ids = self._parse_semicolon_int_list(targets_value)
+            min_required_val = obj.fields.get('min_required') or obj.fields.get('minRequired')
+            try:
+                min_required = int(min_required_val) if min_required_val is not None else None
+            except Exception:
+                min_required = None
+
+            if not target_ids:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Destroy objective has no valid targets specified.")
+                continue
+
+            guaranteed_spawn_start = 0
+            maybe_spawn_start = 0
+
+            for tid in target_ids:
+                udata = unit_by_id.get(tid)
+                if not udata:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target unitInstanceID {tid} not found at build time. "
+                        f"If this unit is spawned later via events, Destroy may not count; prefer Conditional objectives.")
+                    continue
+
+                uobj: Unit = udata['unit_obj']
+                # unit_fields holds spawn flags after __post_init__
+                uf = getattr(uobj, 'unit_fields', {}) or {}
+                spawn_on_start = uf.get('spawn_on_start')
+                respawnable = uf.get('respawnable')
+                spawn_chance = int(udata.get('spawn_chance') or 100)
+
+                # Player spawns are a poor fit for Destroy
+                if getattr(uobj, 'unit_id', '') in ('PlayerSpawn', 'MultiplayerSpawn'):
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target {tid} is a player spawn. "
+                        f"Avoid Destroy/Protect on players; drive win via Team Score and Conditional objectives instead.")
+
+                if spawn_on_start is False:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target {tid} is spawn_on_start=False. "
+                        f"Units that spawn later typically don't count toward Destroy—use a Conditional objective tied to the spawn/death event.")
+
+                if respawnable is True:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target {tid} is respawnable=True. "
+                        f"Destroy completion can be ambiguous with respawns; ensure min_required is set accordingly or avoid respawn.")
+
+                # Track counts for feasibility checks
+                if spawn_on_start is True and spawn_chance >= 100:
+                    guaranteed_spawn_start += 1
+                elif (spawn_on_start is None) and spawn_chance >= 100:
+                    # Unknown default in engine; treat as maybe
+                    maybe_spawn_start += 1
+
+                if spawn_chance < 100:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target {tid} has spawn_chance={spawn_chance}%. "
+                        f"Objectives may be impossible if not enough targets actually spawn.")
+
+            # Objective-level thresholds
+            if min_required is not None:
+                if min_required > len(target_ids):
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): min_required={min_required} exceeds number of targets ({len(target_ids)}).")
+                if min_required > guaranteed_spawn_start:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): min_required={min_required} exceeds guaranteed-on-start targets ({guaranteed_spawn_start}). "
+                        f"Mission may be unwinnable at start unless targets spawn later (which often won't count for Destroy).")
+                if min_required > (guaranteed_spawn_start + maybe_spawn_start):
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Even assuming default spawns, min_required={min_required} > potential on-start targets ({guaranteed_spawn_start + maybe_spawn_start}).")
+
+        return warnings
+
+    def validate_protect_objectives(self) -> List[str]:
+        """Validate Protect objectives (VTOMDefendUnit) against known pitfalls.
+
+        Checks include:
+        - Target unit exists at build time
+        - Target spawns on start (spawn_on_start=True)
+        - Target is not respawnable
+        - Target is not a player spawn (PlayerSpawn/MultiplayerSpawn)
+        - Target spawn_chance is 100%
+        """
+        warnings: List[str] = []
+
+        # Build a lookup for unit instance data
+        unit_by_id: Dict[int, Dict[str, Any]] = {}
+        for u in self.units:
+            try:
+                unit_by_id[int(u.get('unitInstanceID'))] = u
+            except Exception:
+                continue
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) != 'Protect':
+                continue
+
+            # Extract target (single Unit ID)
+            target_value = obj.fields.get('target') or obj.fields.get('Target')
+
+            target_id: Optional[int] = None
+            try:
+                if isinstance(target_value, str):
+                    target_id = int(target_value.strip()) if target_value.strip() else None
+                elif isinstance(target_value, (int, float)):
+                    target_id = int(target_value)
+            except Exception:
+                target_id = None
+
+            if target_id is None:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Protect objective has no valid target specified.")
+                continue
+
+            udata = unit_by_id.get(target_id)
+            if not udata:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target unitInstanceID {target_id} not found at build time. "
+                    f"If this unit is spawned later via events, Protect may not evaluate as expected; prefer Conditional objectives.")
+                continue
+
+            uobj: Unit = udata['unit_obj']
+            uf = getattr(uobj, 'unit_fields', {}) or {}
+            spawn_on_start = uf.get('spawn_on_start')
+            respawnable = uf.get('respawnable')
+            invincible = uf.get('invincible')
+            spawn_chance = int(udata.get('spawn_chance') or 100)
+
+            # Player spawns are a poor fit for Protect
+            if getattr(uobj, 'unit_id', '') in ('PlayerSpawn', 'MultiplayerSpawn'):
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target {target_id} is a player spawn. "
+                    f"Avoid Destroy/Protect on players; drive win via Team Score and Conditional objectives instead.")
+
+            if spawn_on_start is False:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target {target_id} is spawn_on_start=False. "
+                    f"Protect objectives typically assume the defended unit exists at mission start—use a Conditional tied to its lifecycle if it spawns later.")
+
+            if respawnable is True:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target {target_id} is respawnable=True. "
+                    f"Respawns can create ambiguous Protect outcomes on death/survival; consider disabling respawn or using Conditionals.")
+
+            if spawn_chance < 100:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target {target_id} has spawn_chance={spawn_chance}%. "
+                    f"Mission may fail or become trivial if the protected unit doesn't spawn reliably.")
+
+            if invincible is True:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Target {target_id} has invincible=True. "
+                    f"Protect may be trivial/meaningless if the unit cannot be destroyed; ensure this is intentional.")
+
+        return warnings
+
+    def validate_objectives(self) -> List[str]:
+        """Run all mission-level objective validations and log warnings."""
+        warnings: List[str] = []
+        warnings.extend(self.validate_destroy_objectives())
+        warnings.extend(self.validate_protect_objectives())
+        warnings.extend(self.validate_flyto_objectives())
+        warnings.extend(self.validate_land_objectives())
+        warnings.extend(self.validate_refuel_objectives())
+        warnings.extend(self.validate_conditional_objectives())
+        warnings.extend(self.validate_pickup_dropoff_objectives())
+        for w in warnings:
+            self.logger.warning(f"[Objective Validation] {w}")
+        if not warnings:
+            self.logger.info("Objective validation: no issues found.")
+        return warnings
+
+    def validate_flyto_objectives(self) -> List[str]:
+        """Validate FlyTo objectives for common issues."""
+        warnings: List[str] = []
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) not in ('Fly_To', 'FlyTo'):
+                continue
+
+            # Check waypoint presence
+            waypoint_value = getattr(obj, 'waypoint', None)
+            if waypoint_value is None:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): FlyTo objective has no waypoint specified.")
+                continue
+
+            # Check trigger_radius sanity
+            trigger_radius = obj.fields.get('trigger_radius') or obj.fields.get('triggerRadius')
+            try:
+                radius_val = float(trigger_radius) if trigger_radius is not None else None
+            except Exception:
+                radius_val = None
+
+            if radius_val is not None:
+                if radius_val <= 0:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): trigger_radius={radius_val} is invalid (must be > 0).")
+                elif radius_val < 10:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): trigger_radius={radius_val}m is very small; may be hard to trigger reliably.")
+                elif radius_val > 50000:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): trigger_radius={radius_val}m is extremely large; may trigger prematurely.")
+
+            # Optional: Check spherical_radius flag
+            spherical = obj.fields.get('spherical_radius') or obj.fields.get('sphericalRadius')
+            if spherical is False:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): spherical_radius=False uses 2D radius (altitude ignored); ensure waypoint altitude matches flight level.")
+
+        return warnings
+
+    def validate_land_objectives(self) -> List[str]:
+        """Validate Land objectives for terrain suitability and parameters."""
+        warnings: List[str] = []
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) not in ('Land', 'LandAt'):
+                continue
+
+            # Check waypoint presence
+            waypoint_value = getattr(obj, 'waypoint', None)
+            if waypoint_value is None:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Land objective has no waypoint specified.")
+                continue
+
+            # Check radius
+            radius = obj.fields.get('radius') or obj.fields.get('Radius')
+            try:
+                radius_val = float(radius) if radius is not None else None
+            except Exception:
+                radius_val = None
+
+            if radius_val is not None:
+                if radius_val <= 0:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): radius={radius_val} is invalid (must be > 0).")
+                elif radius_val < 50:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): radius={radius_val}m is very tight for landing; consider increasing to 100-200m.")
+                elif radius_val > 2000:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): radius={radius_val}m is very large; may be trivial to complete.")
+
+            # Terrain check if waypoint is resolved
+            if hasattr(self, 'tc') and self.tc is not None:
+                try:
+                    # Try to resolve waypoint to coordinates
+                    wpt_obj = None
+                    if isinstance(waypoint_value, Waypoint):
+                        wpt_obj = waypoint_value
+                    elif isinstance(waypoint_value, (str, int)):
+                        # Look up in _waypoints_map
+                        for wpt in self.waypoints:
+                            if self._get_or_assign_id(wpt, "_pytol_wpt") == waypoint_value:
+                                wpt_obj = wpt
+                                break
+
+                    if wpt_obj and hasattr(wpt_obj, 'global_point') and wpt_obj.global_point:
+                        x, y, z = wpt_obj.global_point[0], wpt_obj.global_point[1], wpt_obj.global_point[2]
+                        is_water = self.tc.is_water(x, z)
+                        if is_water:
+                            warnings.append(
+                                f"Objective '{obj.name}' (ID {obj.objective_id}): Landing waypoint is over water; ensure carrier/seaplane landing or relocate.")
+                except Exception:
+                    pass  # Skip terrain checks if unavailable
+
+        return warnings
+
+    def validate_refuel_objectives(self) -> List[str]:
+        """Validate Refuel objectives for target validity."""
+        warnings: List[str] = []
+
+        # Build unit lookup
+        unit_by_id: Dict[int, Dict[str, Any]] = {}
+        for u in self.units:
+            try:
+                unit_by_id[int(u.get('unitInstanceID'))] = u
+            except Exception:
+                continue
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) != 'Refuel':
+                continue
+
+            # Extract targets
+            targets_value = obj.fields.get('targets') or obj.fields.get('Targets')
+            target_ids = self._parse_semicolon_int_list(targets_value)
+
+            if not target_ids:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Refuel objective has no valid targets specified.")
+                continue
+
+            for tid in target_ids:
+                udata = unit_by_id.get(tid)
+                if not udata:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Refuel target unitInstanceID {tid} not found at build time.")
+                    continue
+
+                uobj: Unit = udata['unit_obj']
+                unit_id = getattr(uobj, 'unit_id', '')
+
+                # Check if target is a tanker or refuel point
+                refuel_types = ['KC-49', 'MQ-31', 'AlliedRearmRefuelPoint', 'AlliedRearmRefuelPointB', 
+                               'AlliedRearmRefuelPointC', 'AlliedRearmRefuelPointD', 'EnemyRearmRefuelPoint',
+                               'EnemyRearmRefuelPointB', 'EnemyRearmRefuelPointC', 'EnemyRearmRefuelPointD']
+                
+                if unit_id not in refuel_types:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): Target {tid} (type '{unit_id}') is not a known tanker or refuel point; refueling may not work.")
+
+            # Check fuel_level sanity
+            fuel_level = obj.fields.get('fuel_level') or obj.fields.get('fuelLevel')
+            try:
+                fuel_val = float(fuel_level) if fuel_level is not None else None
+            except Exception:
+                fuel_val = None
+
+            if fuel_val is not None:
+                if fuel_val < 0 or fuel_val > 1:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): fuel_level={fuel_val} is out of range [0.0, 1.0].")
+                elif fuel_val < 0.1:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): fuel_level={fuel_val} is very low; may be hard to achieve in practice.")
+
+        return warnings
+
+    def validate_conditional_objectives(self) -> List[str]:
+        """Validate Conditional objectives for referenced conditionals and common issues."""
+        warnings: List[str] = []
+
+        # Build conditional ID set
+        conditional_ids = set(self.conditionals.keys())
+
+        for obj in self.objectives:
+            if getattr(obj, 'type', None) != 'Conditional':
+                continue
+
+            success_cond = obj.fields.get('success_conditional') or obj.fields.get('successConditional')
+            fail_cond = obj.fields.get('fail_conditional') or obj.fields.get('failConditional')
+
+            # Check if at least one condition is specified
+            if not success_cond and not fail_cond:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): Conditional objective has neither success nor fail condition; will never complete or fail.")
+                continue
+
+            # Check success condition exists
+            if success_cond:
+                if success_cond not in conditional_ids:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): success_conditional '{success_cond}' does not exist in mission.")
+
+            # Check fail condition exists
+            if fail_cond:
+                if fail_cond not in conditional_ids:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): fail_conditional '{fail_cond}' does not exist in mission.")
+
+        return warnings
+
+    def validate_pickup_dropoff_objectives(self) -> List[str]:
+        """Validate PickUp and DropOff objectives for feasibility."""
+        warnings: List[str] = []
+
+        for obj in self.objectives:
+            obj_type = getattr(obj, 'type', None)
+            if obj_type not in ('Pick_Up', 'PickUp', 'Drop_Off', 'DropOff'):
+                continue
+
+            # Check targets
+            targets_value = obj.fields.get('targets') or obj.fields.get('Targets')
+            if not targets_value:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): {obj_type} objective has no targets specified.")
+                continue
+
+            # Check min_required
+            min_required_val = obj.fields.get('min_required') or obj.fields.get('minRequired')
+            try:
+                min_required = int(min_required_val) if min_required_val is not None else None
+            except Exception:
+                min_required = None
+
+            if min_required is not None and min_required <= 0:
+                warnings.append(
+                    f"Objective '{obj.name}' (ID {obj.objective_id}): min_required={min_required} is invalid (must be > 0).")
+
+            # Check for waypoint/location (DropOff specific)
+            if obj_type in ('Drop_Off', 'DropOff'):
+                dropoff_rally = obj.fields.get('dropoff_rally_pt') or obj.fields.get('dropoffRallyPt')
+                unload_radius = obj.fields.get('unload_radius') or obj.fields.get('unloadRadius')
+                
+                if not dropoff_rally:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): DropOff objective has no dropoff_rally_pt specified; infantry may not disembark.")
+                
+                try:
+                    radius_val = float(unload_radius) if unload_radius is not None else None
+                except Exception:
+                    radius_val = None
+                
+                if radius_val is not None and radius_val <= 0:
+                    warnings.append(
+                        f"Objective '{obj.name}' (ID {obj.objective_id}): unload_radius={radius_val} is invalid (must be > 0).")
+
+        return warnings
+
+    # Convenience alias
+    def validate(self) -> List[str]:
+        """Validate mission objectives and return warnings (non-fatal)."""
+        return self.validate_objectives()
 
     # ========== Equipment Helper Methods ==========
     
@@ -1926,7 +2400,19 @@ class Mission:
         ])
         vts += eol.join(root_props) + eol
 
-        vts += _format_block("WEATHER_PRESETS", "") # TODO
+        # --- WEATHER_PRESETS ---
+        if self.weather_presets:
+            wp_c = ""
+            for wp in self.weather_presets:
+                wp_c += (
+                    f"\t\tPRESET{eol}\t\t{{{eol}"
+                    f"\t\t\tid = {wp.id}{eol}"
+                    f"\t\t\tdata = {wp.to_vts_data_line()}{eol}"
+                    f"\t\t}}{eol}"
+                )
+            vts += _format_block("WEATHER_PRESETS", wp_c)
+        else:
+            vts += _format_block("WEATHER_PRESETS", "")
         vts += _format_block("UNITS", c["UNITS"])
         vts += _format_block("PATHS", c["PATHS"])
         vts += _format_block("WAYPOINTS", c["WAYPOINTS"])
@@ -1961,6 +2447,14 @@ class Mission:
         into the specified base path. Also copies any resource files added
         via add_resource() to their appropriate subdirectories.
         """
+        # Run objective validation before saving (log-only; in strict mode highlight)
+        try:
+            warnings = self.validate_objectives()
+            if self.strict and warnings:
+                self.logger.warning(f"Strict mode: {len(warnings)} objective warnings detected. Proceeding with save.")
+        except Exception as e:
+            self.logger.error(f"Objective validation error: {e}")
+
         mission_dir = os.path.join(base_path, self.scenario_id)
         os.makedirs(mission_dir, exist_ok=True)
         
@@ -2004,3 +2498,29 @@ class Mission:
         self._save_to_file(vts_path)
         
         return mission_dir
+
+    # ========== Weather Preset Methods ==========
+
+    def add_weather_preset(self, preset: WeatherPreset):
+        """
+        Add a custom weather preset. Validates that id >= 8 and unique among presets.
+
+        Built-in presets occupy ids 0-7. Use 8+ for customs.
+        """
+        if preset.id < 8:
+            raise ValueError("WeatherPreset.id must be >= 8 to avoid built-in presets (0-7)")
+        if any(p.id == preset.id for p in self.weather_presets):
+            raise ValueError(f"Duplicate WeatherPreset id {preset.id} already exists")
+        self.weather_presets.append(preset)
+        self.logger.info(f"✓ Added weather preset '{preset.preset_name}' (id={preset.id})")
+
+    def set_default_weather(self, preset_id: int):
+        """
+        Set the mission's defaultWeather id. Can be a built-in (0-7) or a custom id (>=8).
+        """
+        # If custom, ensure it exists to avoid surprises
+        if preset_id >= 8 and not any(p.id == preset_id for p in self.weather_presets):
+            self.logger.warning(
+                f"Setting defaultWeather to id {preset_id} which is not in custom presets list. Proceeding anyway.")
+        self.default_weather = preset_id
+        self.logger.info(f"✓ Set defaultWeather = {preset_id}")

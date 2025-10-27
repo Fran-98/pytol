@@ -27,6 +27,7 @@ from .classes.mission_objects import (
     RandomEventAction,
     EventSequence,
     SequenceEvent,
+    WeatherPreset,
     Conditional
 )
 

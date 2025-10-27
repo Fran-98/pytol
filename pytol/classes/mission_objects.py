@@ -1,6 +1,6 @@
 # pytol/classes/mission_objects.py
 from dataclasses import dataclass, field, fields
-from typing import List, Optional, Union, Dict, Any, cast, Literal
+from typing import List, Optional, Union, Dict, Any, Literal, Tuple
 from pytol.classes.conditionals import Conditional
 # --- Event/Action Objects ---
 @dataclass
@@ -179,3 +179,71 @@ class RandomEvent:
     id: int                       # Unique integer ID for the random event group
     name: str                     # Used as the 'note' field in the VTS
     action_options: List[RandomEventAction] = field(default_factory=list) # List of possible actions
+
+# --- Weather Preset Dataclass ---
+@dataclass(unsafe_hash=True)
+class WeatherPreset(BasePytolObject):
+    """
+    Represents a custom WEATHER_PRESETS::PRESET entry for VTOL VR missions.
+
+    The 'data' field in VTS is a semicolon-separated list with the following order:
+      1) presetName (str)
+      2) cloudPlaneAltitude (float, meters)
+      3) cloudiness (float 0-1)
+      4) macroCloudiness (float 0-1)
+      5) cirrus (float 0-2)
+      6) stratocumulus (float 0-2)
+      7) precipitation (float 0-1)
+      8) lightningChance (float 0-1)
+      9) fogDensity (float 0-1)
+     10) fogColor (tuple rgba, 0-1 each)
+     11) fogHeight (float 0-4, fraction of cloud height)
+     12) fogFalloff (float meters, 0-10000)
+     13) cloudDensity (float 0-8)
+
+    Notes:
+    - Preset IDs must start at 8 to avoid colliding with built-in presets (0-7).
+    - 'defaultWeather' at the mission root references a preset id (built-in or custom).
+    """
+    id: int
+    preset_name: str
+    cloud_plane_altitude: float
+    cloudiness: float
+    macro_cloudiness: float
+    cirrus: float
+    stratocumulus: float
+    precipitation: float
+    lightning_chance: float
+    fog_density: float
+    fog_color: Tuple[float, float, float, float]
+    fog_height: float
+    fog_falloff: float
+    cloud_density: float
+
+    def to_vts_data_line(self) -> str:
+        """
+        Builds the semicolon-separated 'data =' line content for the PRESET block.
+
+        Returns:
+            A string like: "Name;1500;0.3;...;(r, g, b, a);1;1000;0;"
+        """
+        r, g, b, a = self.fog_color
+        # Ensure standard formatting with spaces after commas to match editor export style
+        color_str = f"({r}, {g}, {b}, {a})"
+        parts = [
+            self.preset_name,
+            str(self.cloud_plane_altitude),
+            str(self.cloudiness),
+            str(self.macro_cloudiness),
+            str(self.cirrus),
+            str(self.stratocumulus),
+            str(self.precipitation),
+            str(self.lightning_chance),
+            str(self.fog_density),
+            color_str,
+            str(self.fog_height),
+            str(self.fog_falloff),
+            str(self.cloud_density),
+        ]
+        # Join with semicolons and include trailing semicolon
+        return ";".join(parts) + ";"
