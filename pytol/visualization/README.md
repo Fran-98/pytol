@@ -1,27 +1,75 @@
 # Pytol Visualization
 
-3D visualization for VTOL VR missions and terrain using PyVista.
+Visualization for VTOL VR missions and terrain with both 2D and 3D options.
 
-## Installation
+## Installation Options
 
+### 2D Visualization (Lightweight)
+```bash
+pip install pytol[viz-light]
+```
+Static top-down tactical images using matplotlib. Perfect for mission briefings and documentation.
+
+### 3D Visualization (Interactive)
 ```bash
 pip install pytol[viz]
 ```
+Interactive 3D exploration using PyVista. Great for terrain analysis and mission development.
 
-This installs pytol with the optional PyVista dependency.
+### Both Options
+```bash
+pip install pytol[viz] pytol[viz-light]
+```
 
 ## Quick Start
 
-### Visualizing Terrain
+### 2D Static Maps (Fast & Professional)
+
+```python
+from pytol import Mission, Map2DVisualizer, save_mission_map
+from pytol.terrain import TerrainCalculator
+
+# Create a mission
+mission = Mission(
+    scenario_name="Strike Mission",
+    scenario_id="strike1", 
+    description="Test mission",
+    map_id="archipielago_1",
+    vtol_directory=r"C:\Path\To\VTOL VR"
+)
+# ... add units, waypoints, objectives ...
+
+# Generate clean professional overview (recommended)
+viz = Map2DVisualizer(mission, figsize=(12, 12), dpi=150)
+viz.save_mission_overview("mission_clean.png", clean_mode=True)
+
+# Generate with terrain elevation
+viz.save_mission_overview("mission_terrain.png", terrain_style='contour')
+
+# Generate detailed terrain heatmap  
+viz.save_terrain_overview("terrain_heatmap.png", style='heatmap')
+
+# Generate spawn points detail for briefings
+viz.save_spawn_points_detail("spawn_points.png", base_index=0)
+
+# Quick convenience function
+save_mission_map(mission, "quick_map.png", clean_mode=True)
+
+# Terrain-only images
+tc = TerrainCalculator("archipielago_1", vtol_directory=r"C:\Path\To\VTOL VR")
+Map2DVisualizer(tc).save_terrain_overview("terrain_only.png", style='heatmap')
+```
+
+### 3D Interactive Exploration
 
 ```python
 from pytol.terrain import TerrainCalculator
 from pytol.visualization import TerrainVisualizer
 
 # Load terrain
-tc = TerrainCalculator("hMap2", verbose=False)  # Optional: suppress progress messages
+tc = TerrainCalculator("hMap2", verbose=False)
 
-# Visualize
+# Interactive 3D visualization
 viz = TerrainVisualizer(
     tc,
     mesh_resolution=256,  # Terrain detail (default: 256)

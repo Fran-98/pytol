@@ -1,6 +1,6 @@
 [project]
 name = "pytol"
-version = "0.3.0"
+version = "0.4.0"
 authors = [
   { name="Fran-98", email="franciscopvargas98@gmail.com" },
 ]
@@ -27,8 +27,13 @@ viz = [
     "pyvista"
 ]
 
+viz-light = [
+    "matplotlib"
+]
+
 all = [
-    "pytol[viz]"
+    "pytol[viz]",
+    "pytol[viz-light]"
 ]
 
 [project.urls]

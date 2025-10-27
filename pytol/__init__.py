@@ -65,14 +65,25 @@ _logger = create_logger(verbose=False, name="pytol")
 _logger.info(f"Pytol {__version__} loaded.")
 
 # --- Visualization (Optional) ---
-# Import visualization if pyvista is available
+# Import 2D visualization (matplotlib)
+try:
+    from .visualization import Map2DVisualizer, save_mission_map
+    _viz2d_available = True
+except ImportError:
+    _viz2d_available = False
+    Map2DVisualizer = None
+    save_mission_map = None
+
+# Import 3D visualization (pyvista)
 try:
     from .visualization import MissionVisualizer, TerrainVisualizer
-    _viz_available = True
+    _viz3d_available = True
 except ImportError:
-    _viz_available = False
+    _viz3d_available = False
     MissionVisualizer = None
     TerrainVisualizer = None
 
-if _viz_available:
-    _logger.info("  -> Visualization module available (pyvista detected)")
+if _viz2d_available:
+    _logger.info("  -> 2D Visualization available (matplotlib detected)")
+if _viz3d_available:
+    _logger.info("  -> 3D Visualization available (pyvista detected)")

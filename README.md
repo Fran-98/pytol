@@ -41,6 +41,7 @@ This enables automation in mission creation, allowing for more dynamic and compl
 * **Mission Building**: Construct `.vts` files programmatically, adding units, objectives, triggers, waypoints, and briefing notes.
 * **Campaign Support**: Create `.vtc` campaign files with multiple missions, including multiplayer campaigns.
 * **Scenario Primitives**: Helpers for generating common scenario setups like CSAR or base defense.
+* **2D Visualization** *(optional)*: Lightweight static mission maps and clean overviews using matplotlib - perfect for mission briefings.
 * **3D Visualization** *(optional)*: Interactive visualization of terrain and complete missions using PyVista.
 
 ---
@@ -57,15 +58,27 @@ If you just want to use the library, you can install the latest stable release d
 pip install pytol
 ```
 
-### Optional: Visualization Module
+### Optional: Visualization Modules
 
-For 3D visualization of terrains and missions:
+For **2D visualization** (lightweight static maps with matplotlib):
+
+```bash
+pip install pytol[viz-light]
+```
+
+For **3D visualization** (interactive PyVista visualizations):
 
 ```bash
 pip install pytol[viz]
 ```
 
-This installs PyVista for interactive 3D visualization. See [Visualization Guide](pytol/visualization/README.md) for details.
+For **both 2D and 3D** visualization:
+
+```bash  
+pip install pytol[all]
+```
+
+See [Visualization Guide](pytol/visualization/README.md) for details on both systems.
 
 ### 2. From Source (For development)
 
@@ -91,7 +104,7 @@ You also need to ensure the **VTOL VR game directory** is accessible on both met
 📚 **[Mission Creation Guide](docs/mission_creation.md)** - Complete guide to creating missions with Pytol  
 🎯 **[Campaign Creation Guide](docs/campaign_creation.md)** - Create multi-mission campaigns and multiplayer missions  
 🗺️ **[Terrain Behavior](docs/terrain_behavior.md)** - How terrain height sampling works and accuracy expectations  
-🎨 **[Visualization Guide](pytol/visualization/README.md)** - 3D visualization of terrains and missions (requires `pytol[viz]`)
+🎨 **[Visualization Guide](pytol/visualization/README.md)** - Both 2D static maps and 3D interactive visualization
 
 ---
 
@@ -314,7 +327,51 @@ except Exception as e:
 
 -----
 
-## 3D Visualization (Optional)
+## Visualization (Optional)
+
+### 2D Static Maps (Lightweight)
+
+If you installed `pytol[viz-light]`, you can generate beautiful static mission maps perfect for briefings:
+
+```python
+from pytol import Mission, Map2DVisualizer, save_mission_map
+
+# Create mission
+mission = Mission(
+    scenario_name="Strike Mission",
+    scenario_id="strike1", 
+    description="Test mission",
+    map_id="archipielago_1",
+    vtol_directory=r"C:\Path\To\VTOL VR"
+)
+# ... add units, waypoints, objectives ...
+
+# Generate clean mission overview (recommended)
+viz = Map2DVisualizer(mission, figsize=(12, 12), dpi=150)
+viz.save_mission_overview("mission_clean.png", clean_mode=True)
+
+# Generate with terrain heightmap
+viz.save_mission_overview("mission_full.png", terrain_style='contour')
+
+# Generate terrain heatmap
+viz.save_terrain_overview("terrain.png", style='heatmap')
+
+# Generate spawn points detail
+viz.save_spawn_points_detail("spawn_points.png", base_index=0)
+
+# Quick convenience function
+save_mission_map(mission, "overview.png", clean_mode=True)
+```
+
+**2D visualization features:**
+- **Clean mode**: Professional mission maps without terrain clutter (perfect for briefings)
+- **Terrain layers**: Contour maps or elevation heatmaps
+- **Infrastructure**: Roads, cities, and airbases clearly marked
+- **Mission elements**: Units with team colors, waypoints, objectives, and spawn points
+- **Multiple formats**: PNG, PDF, SVG output with customizable DPI and sizing
+- **Small file sizes**: Clean mode generates compact images (typically 50-100KB)
+
+### 3D Interactive Exploration
 
 If you installed `pytol[viz]`, you can visualize terrains and missions in 3D:
 

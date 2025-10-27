@@ -716,8 +716,52 @@ When you call `save_mission()`, Pytol will:
 - Use `height_scale` and `height_offset` parameters if needed (experimental)
 - Validate with known reference points from in-game
 
+## Visualizing Your Mission
+
+Once your mission is created, you can generate professional maps for briefings:
+
+### 2D Static Maps (Lightweight)
+
+```python
+# Install: pip install pytol[viz-light]
+from pytol import Map2DVisualizer
+
+# Generate clean professional overview
+viz = Map2DVisualizer(mission, figsize=(12, 12), dpi=150)
+viz.save_mission_overview("mission_briefing.png", clean_mode=True)
+
+# Generate detailed terrain view
+viz.save_terrain_overview("terrain_analysis.png", style='heatmap')
+
+# Generate spawn points detail for pilots
+viz.save_spawn_points_detail("spawn_points.png", base_index=0)
+```
+
+### 3D Interactive Exploration
+
+```python
+# Install: pip install pytol[viz]
+from pytol import MissionVisualizer
+
+# Interactive 3D visualization
+viz = MissionVisualizer(mission)
+viz.show()
+```
+
+### Procedural Mission Generator Example
+
+Try the complete procedural mission generator with automatic visualization:
+
+```bash
+python generate_procedural_missions.py
+```
+
+This creates randomized tactical missions with professional 2D maps automatically.
+
 ## See Also
 
+- [2D Visualization Guide](../pytol/visualization/README_2D.md) - Complete 2D visualization documentation
+- [3D Visualization Guide](../pytol/visualization/README.md) - Interactive 3D visualization
 - [Terrain Behavior Documentation](terrain_behavior.md) - Height sampling and city behavior
 - [API Reference](../README.md) - Complete API documentation
 
