@@ -8,6 +8,7 @@ from typing import List, Tuple
 from dataclasses import dataclass
 
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
+from pytol.misc.math_utils import calculate_slope_from_normal
 
 
 @dataclass
@@ -101,7 +102,7 @@ class IntelligentPlacer:
         
         # Terrain slope (defensive positions on hills)
         normal = self.tc.get_terrain_normal(x, z)
-        slope_deg = math.degrees(math.acos(max(-1.0, min(1.0, float(normal[1])))))
+        slope_deg = calculate_slope_from_normal(normal)
         
         if prefer_defensive:
             # Prefer moderate slopes (5-20 degrees) for defense

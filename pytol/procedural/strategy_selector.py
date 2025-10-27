@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import List, Tuple
 
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
+from pytol.misc.math_utils import calculate_slope_from_normal
 from .spec import TargetBias
 
 
@@ -55,7 +56,7 @@ class StrategySelector:
 
         def slope_degrees(x: float, z: float) -> float:
             n = tc.get_terrain_normal(x, z)
-            return math.degrees(math.acos(max(-1.0, min(1.0, float(n[1])))))
+            return calculate_slope_from_normal(n)
 
         def score_point(mt: str, x: float, z: float) -> float:
             y = tc.get_terrain_height(x, z)

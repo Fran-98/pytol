@@ -34,6 +34,78 @@ class ProceduralMissionEngine:
     def __post_init__(self):
         self.logger = create_logger(verbose=self.verbose, name="ProceduralEngine")
 
+    def _find_valid_objective_position(self, target_position, mission_type, helper):
+        """
+        Find a valid terrain position for objective placement.
+        
+        This ensures objectives are placed on accessible terrain while keeping
+        the core mission system flexible for manual placement.
+        """
+        import math
+        import random
+        from ..misc.math_utils import generate_random_angle
+        
+        x, y, z = target_position
+        tc = helper.tc
+        
+        # Check if original position is valid
+        if self._is_valid_objective_position(target_position, mission_type, tc):
+            return target_position
+        
+        # Search for a valid position nearby
+        search_radius = 2000.0
+        max_attempts = 30
+        
+        from pytol.misc.math_utils import generate_random_position_in_circle
+        for attempt in range(max_attempts):
+            # Gradually expand search radius with attempts
+            current_max_radius = search_radius * (1 + attempt / max_attempts)
+            test_x, test_z = generate_random_position_in_circle(
+                (x, z), current_max_radius, min_distance=100
+            )
+            
+            # Stay within map bounds
+            if not (0 <= test_x <= tc.total_map_size_meters and 0 <= test_z <= tc.total_map_size_meters):
+                continue
+            
+            test_y = tc.get_terrain_height(test_x, test_z)
+            test_position = (test_x, test_y, test_z)
+            
+            if self._is_valid_objective_position(test_position, mission_type, tc):
+                self.logger.info(f"Found valid objective position at {test_position}")
+                return test_position
+        
+        # Fallback: use original position with corrected height
+        corrected_y = tc.get_terrain_height(x, z)
+        fallback_position = (x, corrected_y, z)
+        self.logger.warning(f"Using potentially invalid objective position {fallback_position}")
+        return fallback_position
+
+    def _is_valid_objective_position(self, position, mission_type, tc):
+        """Check if a position is valid for objective placement."""
+        x, y, z = position
+        
+        # Avoid water for ground missions
+        if y <= tc.min_height + 1.0:  # Near sea level
+            if mission_type in ("strike", "cas", "sead", "transport"):
+                return False
+        
+        # Check terrain slope
+        from ..misc.math_utils import calculate_slope_from_normal
+        normal = tc.get_terrain_normal(x, z)
+        slope_degrees = calculate_slope_from_normal(normal)
+        
+        if mission_type in ("strike", "cas", "sead", "transport"):
+            # Ground missions need reasonable terrain
+            if slope_degrees > 25.0:
+                return False
+        else:
+            # Air missions can handle steeper terrain
+            if slope_degrees > 45.0:
+                return False
+        
+        return True
+
     def generate(self, spec: ProceduralMissionSpec):
         """
         Build and return a pytol Mission based on the provided spec.
@@ -111,25 +183,60 @@ class ProceduralMissionEngine:
         threat_level = 0.0  # Future: query ThreatMap at target
         target_agl = alt_policy.choose_agl(threat_level)
 
-        # Emit waypoints: ingress -> target -> egress
-        waypoint_positions = route.ingress + [route.target] + route.egress
+        # Generate tactical waypoints with terrain awareness
+        from .tactical_waypoint_generator import TacticalWaypointGenerator
+        waypoint_gen = TacticalWaypointGenerator(helper)
+        
+        # Collect basic route positions
+        route_positions = route.ingress + [route.target] + route.egress
+        
+        # Enhance with tactical waypoint generation if we have enough points
+        if len(route_positions) >= 2:
+            start_pos = (route_positions[0][0], route_positions[0][1], route_positions[0][2])
+            target_pos = (route.target[0], route.target[1], route.target[2])
+            
+            # Generate terrain-aware tactical route
+            tactical_positions = waypoint_gen.generate_tactical_route(
+                start_pos=start_pos,
+                target_pos=target_pos,
+                mission_type=choices.mission_type,
+                waypoint_count=len(route_positions),
+                threat_positions=None  # TODO: Integrate with threat system
+            )
+            waypoint_positions = tactical_positions
+        else:
+            # Fallback to original positions with AGL offset
+            waypoint_positions = [(wx, wy + target_agl, wz) for wx, wy, wz in route_positions]
         
         # Validate waypoint spacing
         spacing_check = validator.validate_waypoint_spacing(waypoint_positions, min_spacing=500.0)
         if not spacing_check.valid:
             self.logger.warning(f"{spacing_check.message}")
         
+        # Validate waypoint terrain clearance
+        clearance_warnings = waypoint_gen.validate_waypoint_clearance(waypoint_positions, min_clearance=50.0)
+        for warning, pos in clearance_warnings:
+            self.logger.warning(f"Terrain clearance: {warning}")
+        
+        # Validate altitude envelope for mission type
+        altitude_warnings = alt_policy.validate_altitude_envelope(waypoint_positions, helper.tc)
+        for warning in altitude_warnings:
+            self.logger.warning(f"Altitude envelope: {warning}")
+        
         wpt_ids = []
         for i, (wx, wy, wz) in enumerate(waypoint_positions):
             wpt = Waypoint(
                 name=f"WP{i+1}",
-                global_point=[wx, wy + target_agl, wz],  # Add AGL offset
+                global_point=[wx, wy, wz],  # Use calculated tactical altitude
             )
             wpt_id = mission.add_waypoint(wpt)
             wpt_ids.append(wpt_id)
 
         # Note: Objectives will be created after unit spawning so we can reference units
         target_wpt_id = wpt_ids[len(wpt_ids)//2]
+        
+        # Get the target waypoint position for terrain-aware objective placement
+        target_waypoint_pos = waypoint_positions[len(waypoint_positions)//2]
 
         # --- Player Spawn (default: Cold at airbase hangar/apron) ---
         try:
@@ -171,19 +278,16 @@ class ProceduralMissionEngine:
                     player_pos = [cx, cy, cz]
 
                     # Orient toward target from base center
+                    from pytol.misc.math_utils import calculate_bearing
                     tx, _, tz = route.target
-                    dx = (tx - cx)
-                    dz = (tz - cz)
-                    player_yaw = (_math.degrees(_math.atan2(dz, dx)) + 360.0) % 360.0
+                    player_yaw = calculate_bearing((cx, cy, cz), (tx, cy, tz))
 
             else:
                 # Fallback: flight-ready start at ingress AGL if no airbase found
                 ingress_pos = waypoint_positions[0]
                 target_pos = route.target
-                import math as _math
-                dx = (target_pos[0] - ingress_pos[0])
-                dz = (target_pos[2] - ingress_pos[2])
-                player_yaw = (_math.degrees(_math.atan2(dz, dx)) + 360.0) % 360.0
+                from pytol.misc.math_utils import calculate_bearing
+                player_yaw = calculate_bearing(ingress_pos, target_pos)
                 player_pos = [ingress_pos[0], ingress_pos[1], ingress_pos[2]]
                 spawn_mode = "FlightReady"
 
@@ -297,15 +401,28 @@ class ProceduralMissionEngine:
                         self.logger.warning(f"Could not find valid spawn location for {template.unit_type} after {max_attempts_per_unit} attempts, skipping")
                         continue
                     
-                    unit = create_unit(
-                        id_name=template.unit_type,
-                        unit_name=f"{template.name} {i+1}",
-                        team=template.team,
-                        global_position=[spawn_x, spawn_y, spawn_z],
-                        rotation=[0, rng.uniform(0, 360), 0],
-                        behavior=template.behavior,
-                        engage_enemies=template.engage_enemies,
-                    )
+                    # Check if this is an air unit (air units don't support behavior parameter)
+                    is_air_unit = any(air_type in template.unit_type for air_type in ["ASF", "AEW", "F-45A", "F/A-26"])
+                    
+                    if is_air_unit:
+                        unit = create_unit(
+                            id_name=template.unit_type,
+                            unit_name=f"{template.name} {i+1}",
+                            team=template.team,
+                            global_position=[spawn_x, spawn_y, spawn_z],
+                            rotation=[0, rng.uniform(0, 360), 0],
+                            engage_enemies=template.engage_enemies,
+                        )
+                    else:
+                        unit = create_unit(
+                            id_name=template.unit_type,
+                            unit_name=f"{template.name} {i+1}",
+                            team=template.team,
+                            global_position=[spawn_x, spawn_y, spawn_z],
+                            rotation=[0, rng.uniform(0, 360), 0],
+                            behavior=template.behavior,
+                            engage_enemies=template.engage_enemies,
+                        )
                     mission.add_unit(unit, placement="ground")
                     spawned_units.append(unit)
                     spawned_count += 1
@@ -333,16 +450,30 @@ class ProceduralMissionEngine:
                     self.logger.warning(f"Could not find valid QRF spawn for {template.unit_type}, skipping")
                     continue
                 
-                unit = create_unit(
-                    id_name=template.unit_type,
-                    unit_name=f"QRF {template.name} {i+1}",
-                    team=template.team,
-                    global_position=[spawn_x, spawn_y, spawn_z],
-                    rotation=[0, rng.uniform(0, 360), 0],
-                    behavior=template.behavior,
-                    engage_enemies=template.engage_enemies,
-                    spawn_on_start=False,
-                )
+                # Check if this is an air unit (air units don't support behavior parameter)
+                is_air_unit = any(air_type in template.unit_type for air_type in ["ASF", "AEW", "F-45A", "F/A-26"])
+                
+                if is_air_unit:
+                    unit = create_unit(
+                        id_name=template.unit_type,
+                        unit_name=f"QRF {template.name} {i+1}",
+                        team=template.team,
+                        global_position=[spawn_x, spawn_y, spawn_z],
+                        rotation=[0, rng.uniform(0, 360), 0],
+                        engage_enemies=template.engage_enemies,
+                        spawn_on_start=False,
+                    )
+                else:
+                    unit = create_unit(
+                        id_name=template.unit_type,
+                        unit_name=f"QRF {template.name} {i+1}",
+                        team=template.team,
+                        global_position=[spawn_x, spawn_y, spawn_z],
+                        rotation=[0, rng.uniform(0, 360), 0],
+                        behavior=template.behavior,
+                        engage_enemies=template.engage_enemies,
+                        spawn_on_start=False,
+                    )
                 mission.add_unit(unit, placement="ground")
                 qrf_units.append(unit)
 
@@ -372,7 +503,22 @@ class ProceduralMissionEngine:
             
             for obj_idx, spec_obj in enumerate(plan.objectives):
                 if spec_obj.id_name == "Fly_To":
-                    # Navigation objective at target waypoint
+                    # Navigation objective at target waypoint - ensure it's on valid terrain
+                    objective_position = self._find_valid_objective_position(
+                        target_waypoint_pos, choices.mission_type, helper
+                    )
+                    
+                    # Update the target waypoint position if we found a better one
+                    if objective_position != target_waypoint_pos:
+                        self.logger.info("Adjusted objective position for terrain validity")
+                        # Update the waypoint to the terrain-corrected position
+                        target_waypoint = mission.waypoints[target_wpt_id - 1]  # waypoint IDs are 1-based
+                        target_waypoint.global_point = [
+                            objective_position[0], 
+                            objective_position[1] + target_agl, 
+                            objective_position[2]
+                        ]
+                    
                     obj = create_objective(
                         id_name=spec_obj.id_name,
                         objective_id=obj_idx,

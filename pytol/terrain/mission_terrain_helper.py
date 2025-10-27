@@ -47,6 +47,56 @@ class MissionTerrainHelper:
             self.logger.info(msg)
 
     # --- Core Terrain and Objects queries ---
+    
+    def get_terrain_height_safe(self, x: float, z: float, default: float = 0.0) -> float:
+        """
+        Get terrain height with error handling and default fallback.
+        
+        Args:
+            x: World X coordinate
+            z: World Z coordinate
+            default: Default height if query fails
+            
+        Returns:
+            Terrain height or default value
+        """
+        try:
+            height = self.tc.get_terrain_height(x, z)
+            return height if height is not None else default
+        except Exception as e:
+            self._log(f"Warning: Terrain height query failed at ({x:.1f}, {z:.1f}): {e}")
+            return default
+    
+    def sample_terrain_heights(self, positions: list) -> list:
+        """
+        Sample terrain heights for multiple positions efficiently.
+        
+        Args:
+            positions: List of (x, z) tuples
+            
+        Returns:
+            List of heights corresponding to positions
+        """
+        heights = []
+        for x, z in positions:
+            height = self.get_terrain_height_safe(x, z)
+            heights.append(height)
+        return heights
+    
+    def get_terrain_height_with_position(self, x: float, z: float, altitude_agl: float = 0.0):
+        """
+        Get terrain height and return complete 3D position.
+        
+        Args:
+            x: World X coordinate
+            z: World Z coordinate
+            altitude_agl: Altitude above ground level to add
+            
+        Returns:
+            Tuple of (x, y + altitude_agl, z)
+        """
+        y = self.get_terrain_height_safe(x, z)
+        return (x, y + altitude_agl, z)
 
     def has_line_of_sight(self, pos1, pos2, steps=20, terrain_offset=0):
         """
@@ -94,13 +144,13 @@ class MissionTerrainHelper:
         Returns:
             tuple: The (x, y, z) coordinate of a suitable observation post, or None.
         """
+        from ..misc.math_utils import generate_random_position_in_circle
         candidates = []
         for _ in range(num_candidates):
-            angle = random.uniform(0, 2 * np.pi)
             # Uniform distribution within the annulus
-            radius = np.sqrt(random.uniform(min_dist**2, max_dist**2))
-            x = target_area[0] + radius * np.cos(angle)
-            z = target_area[2] + radius * np.sin(angle)
+            x, z = generate_random_position_in_circle(
+                (target_area[0], target_area[2]), max_dist, min_dist, uniform_distribution=True
+            )
             y = self.tc.get_terrain_height(x, z)
             candidates.append((x, y, z))
         
@@ -133,12 +183,12 @@ class MissionTerrainHelper:
             tuple: The (x, y, z) coordinate of a hidden artillery position, or None.
         """
         # This function is the inverse of find_observation_post
+        from ..misc.math_utils import generate_random_position_in_circle
         candidates = []
         for _ in range(30): # More candidates to find a hidden spot
-            angle = random.uniform(0, 2 * np.pi)
-            radius = np.sqrt(random.uniform(standoff_dist**2, search_radius**2))
-            x = target_area[0] + radius * np.cos(angle)
-            z = target_area[2] + radius * np.sin(angle)
+            x, z = generate_random_position_in_circle(
+                (target_area[0], target_area[2]), search_radius, standoff_dist, uniform_distribution=True
+            )
             y = self.tc.get_terrain_height(x, z)
             candidates.append((x, y, z))
             
@@ -404,10 +454,9 @@ class MissionTerrainHelper:
         """
         potential_points = []
         # Find all low points first
+        from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(50): # Sample 50 random points
-            angle = random.uniform(0, 2 * np.pi)
-            rad = random.uniform(0, search_radius)
-            x, z = target_area_center[0] + rad * np.cos(angle), target_area_center[1] + rad * np.sin(angle)
+            x, z = generate_random_position_in_circle(target_area_center, search_radius)
             y = self.tc.get_terrain_height(x, z)
             potential_points.append((x, y, z))
         
@@ -476,11 +525,9 @@ class MissionTerrainHelper:
             return "Urban"
             
         normals_y = []
+        from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(20): # Increased samples for better accuracy
-            angle = random.uniform(0, 2 * np.pi)
-            radius = random.uniform(0, sample_radius)
-            x = position[0] + radius * np.cos(angle)
-            z = position[1] + radius * np.sin(angle)
+            x, z = generate_random_position_in_circle(position, sample_radius)
             normals_y.append(self.tc.get_terrain_normal(x, z)[1])
         
         avg_ny = np.mean(normals_y)
@@ -518,7 +565,7 @@ class MissionTerrainHelper:
         best_choke_point = None
         max_wall_height = -1
 
-        for i in range(len(road_path) - 1):
+        for i, _ in enumerate(road_path[:-1]):
             p1, p2 = np.array(road_path[i]), np.array(road_path[i+1])
             mid_point = (p1 + p2) / 2.0
             
@@ -817,11 +864,11 @@ class MissionTerrainHelper:
         Returns:
             tuple: An (x, y, z) coordinate for the hide position, or None if none found.
         """
+        from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(50): # Increase candidates for a tricky find
-            angle = random.uniform(0, 2 * np.pi)
-            radius = np.sqrt(random.uniform(min_dist**2, search_radius**2))
-            x = target_area[0] + radius * np.cos(angle)
-            z = target_area[2] + radius * np.sin(angle)
+            x, z = generate_random_position_in_circle(
+                (target_area[0], target_area[2]), search_radius, min_dist, uniform_distribution=True
+            )
             y = self.tc.get_terrain_height(x, z)
             
             hide_pos = (x, y + 2, z) # Position of a landed helicopter
@@ -1244,11 +1291,9 @@ class MissionTerrainHelper:
         Returns:
             tuple: An (x, y, z) position in the center of the open area, or None.
         """
+        from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(50): # 50 attempts to find a suitable spot
-            angle = random.uniform(0, 2 * np.pi)
-            radius = random.uniform(0, search_radius)
-            check_x = center_pos[0] + radius * np.cos(angle)
-            check_z = center_pos[1] + radius * np.sin(angle)
+            check_x, check_z = generate_random_position_in_circle(center_pos, search_radius)
             
             # Check 1: City density
             if self.tc.get_city_density(check_x, check_z) > 0.05:
@@ -1492,7 +1537,7 @@ class MissionTerrainHelper:
         
         # Generate the full flight path
         full_path = []
-        for i in range(len(path_order) - 1):
+        for i, _ in enumerate(path_order[:-1]):
             start_pos = (path_order[i]['position'][0], path_order[i]['position'][2])
             end_pos = (path_order[i+1]['position'][0], path_order[i+1]['position'][2])
             segment = self.get_terrain_following_path(start_pos, end_pos, 20, altitude_agl)
@@ -1717,11 +1762,11 @@ class MissionTerrainHelper:
         best_score = -float('inf')
 
         candidates = []
+        from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(50):
-            angle = random.uniform(0, 2 * np.pi)
-            radius = np.sqrt(random.uniform(min_dist**2, max_dist**2))
-            x = point_of_interest[0] + radius * np.cos(angle)
-            z = point_of_interest[2] + radius * np.sin(angle)
+            x, z = generate_random_position_in_circle(
+                (point_of_interest[0], point_of_interest[2]), max_dist, min_dist, uniform_distribution=True
+            )
             y = self.tc.get_terrain_height(x, z)
             candidates.append((x, y, z))
 
@@ -1797,7 +1842,7 @@ class MissionTerrainHelper:
             dict: A dictionary representing the visibility graph.
         """
         visibility_graph = {i: [] for i in range(len(unit_positions))}
-        for i in range(len(unit_positions)):
+        for i, _ in enumerate(unit_positions):
             for j in range(i + 1, len(unit_positions)):
                 pos1 = unit_positions[i]
                 pos2 = unit_positions[j]
@@ -2001,4 +2046,458 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\nAN ERROR OCCURRED DURING TESTING: {e}")
             traceback.print_exc()
+
+    # --- Military Tactical Functions ---
+    # Consolidated military functionality for intelligent mission generation
+
+    def find_defensive_position(self, center_pos, search_radius, system_type='generic', threat_direction=None):
+        """
+        Find tactically sound defensive position using military doctrine.
+        
+        Args:
+            center_pos: Center of search area (x, y, z)
+            search_radius: Search radius in meters
+            system_type: Type of system ('radar', 'sam', 'aaa', 'c2', 'logistics', 'generic')
+            threat_direction: Expected threat axis in degrees (0-360, None for omnidirectional)
+            
+        Returns:
+            Dict with position, score, and tactical analysis
+        """
+        x_center, y_center, z_center = center_pos
+        best_pos = None
+        best_score = -1
+        
+        # Generate candidate positions
+        candidates = []
+        from ..misc.math_utils import generate_random_position_in_circle
+        for _ in range(50):  # More candidates for better selection
+            x, z = generate_random_position_in_circle(
+                (x_center, z_center), search_radius, search_radius * 0.3
+            )
+            y = self.tc.get_elevation_at_point(x, z)
+            
+            if y is not None:
+                candidates.append((x, y, z))
+        
+        # Score each candidate position
+        for pos in candidates:
+            score = self._score_defensive_position(pos, center_pos, system_type, threat_direction)
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+        
+        if best_pos:
+            return {
+                'position': best_pos,
+                'score': best_score,
+                'terrain_analysis': self._analyze_tactical_terrain(best_pos, system_type),
+                'threat_exposure': self._calculate_threat_exposure(best_pos, threat_direction)
+            }
+        return None
+    
+    def _score_defensive_position(self, position, center_pos, system_type='generic', threat_direction=None):
+        """Score defensive position based on tactical factors."""
+        x, y, z = position
+        score = 0.0
+        
+        # 1. Elevation advantage (higher is generally better)
+        elevation_bonus = min(y / 1000.0, 2.0)  # Cap at 2 points
+        score += elevation_bonus
+        
+        # 2. Terrain type suitability
+        terrain_type = self.get_terrain_type(position)
+        terrain_scores = {
+            'rocky': 1.5,    # Excellent for fixed positions
+            'hilly': 1.2,    # Good elevation options
+            'forested': 0.8, # Good concealment but limits radar
+            'urban': 0.6,    # Vulnerable but good for C2
+            'water': 0.1,    # Generally unsuitable
+            'flat': 0.5      # Exposed but easy construction
+        }
+        score += terrain_scores.get(terrain_type, 0.5)
+        
+        # 3. System-specific factors
+        if system_type == 'radar':
+            # Radars need clear lines of sight and elevation
+            score += elevation_bonus * 1.5
+            if terrain_type in ['rocky', 'hilly']:
+                score += 1.0
+        elif system_type == 'sam':
+            # SAMs need good coverage but some concealment
+            if terrain_type in ['rocky', 'hilly', 'forested']:
+                score += 0.8
+        elif system_type == 'aaa':
+            # AAA needs mobility and clear firing lanes
+            if terrain_type in ['flat', 'rocky']:
+                score += 0.6
+        elif system_type == 'c2':
+            # C2 needs protection and communications
+            if terrain_type in ['rocky', 'hilly', 'urban']:
+                score += 0.8
+        elif system_type == 'logistics':
+            # Logistics needs road access and protection
+            road_point = self.get_nearest_road_point(x, z)
+            if road_point and road_point['distance'] < 1000:
+                score += 1.5 - (road_point['distance'] / 1000.0)
+        
+        # 4. Threat direction considerations
+        if threat_direction is not None:
+            # Prefer positions that provide cover from threat direction
+            # This is a simplified model - in reality would need full terrain analysis
+            threat_cover_bonus = self._calculate_threat_cover(position, threat_direction)
+            score += threat_cover_bonus
+        
+        # 5. Slope considerations (not too steep for construction)
+        try:
+            slope = abs(self.tc.get_slope_at_point(x, z))
+            if slope < 5.0:
+                score += 1.0
+            elif slope < 15.0:
+                score += 0.5
+            elif slope > 30.0:
+                score -= 1.0
+        except Exception:
+            pass
+        
+        return max(score, 0.0)
+    
+    def _analyze_tactical_terrain(self, position, system_type):
+        """Analyze terrain for tactical advantages/disadvantages."""
+        x, y, z = position
+        analysis = {
+            'elevation': y,
+            'terrain_type': self.get_terrain_type(position),
+            'concealment': 'unknown',
+            'accessibility': 'unknown',
+            'fields_of_fire': 'unknown'
+        }
+        
+        try:
+            slope = abs(self.tc.get_slope_at_point(x, z))
+            analysis['slope'] = slope
+            
+            # Concealment assessment
+            terrain_type = analysis['terrain_type']
+            if terrain_type == 'forested':
+                analysis['concealment'] = 'excellent'
+            elif terrain_type in ['rocky', 'hilly']:
+                analysis['concealment'] = 'good'
+            elif terrain_type == 'urban':
+                analysis['concealment'] = 'fair'
+            else:
+                analysis['concealment'] = 'poor'
+            
+            # Accessibility assessment
+            road_point = self.get_nearest_road_point(x, z)
+            if road_point:
+                if road_point['distance'] < 500:
+                    analysis['accessibility'] = 'excellent'
+                elif road_point['distance'] < 1500:
+                    analysis['accessibility'] = 'good'
+                else:
+                    analysis['accessibility'] = 'poor'
+            
+            # Fields of fire (simplified)
+            if terrain_type in ['flat', 'rocky'] and slope < 10:
+                analysis['fields_of_fire'] = 'excellent'
+            elif terrain_type == 'hilly':
+                analysis['fields_of_fire'] = 'good'
+            else:
+                analysis['fields_of_fire'] = 'limited'
+                
+        except Exception as e:
+            self._log(f"Warning: Terrain analysis incomplete: {e}")
+        
+        return analysis
+    
+    def _calculate_threat_exposure(self, position, threat_direction=None):
+        """Calculate how exposed position is to threats."""
+        # Simplified threat exposure calculation
+        # In a full implementation, this would consider:
+        # - Line of sight from likely threat positions
+        # - Terrain masking
+        # - Distance from likely ingress routes
+        
+        x, y, z = position
+        exposure = 0.5  # Base exposure
+        
+        try:
+            # Higher elevation = more exposed
+            if y > 1000:
+                exposure += 0.2
+            elif y < 200:
+                exposure -= 0.1
+            
+            # Terrain type affects exposure
+            terrain_type = self.get_terrain_type(position)
+            if terrain_type == 'flat':
+                exposure += 0.3
+            elif terrain_type in ['forested', 'urban']:
+                exposure -= 0.2
+            elif terrain_type in ['rocky', 'hilly']:
+                exposure -= 0.1
+            
+        except Exception as e:
+            self._log(f"Warning: Threat exposure calculation incomplete: {e}")
+        
+        return max(0.0, min(1.0, exposure))
+    
+    def _calculate_threat_cover(self, position, threat_direction):
+        """Calculate cover provided against specific threat direction."""
+        # Simplified threat cover calculation
+        # Would need full terrain analysis for accurate assessment
+        return random.uniform(0.0, 0.5)  # Placeholder
+    
+    def assess_airbase_suitability(self, position, runway_length_required=2000):
+        """
+        Assess terrain suitability for airbase construction.
+        
+        Args:
+            position: Candidate position (x, y, z)
+            runway_length_required: Minimum runway length in meters
+            
+        Returns:
+            Dict with suitability analysis
+        """
+        x, y, z = position
+        assessment = {
+            'overall_score': 0.0,
+            'terrain_suitable': False,
+            'space_available': False,
+            'accessibility': 'unknown',
+            'strategic_value': 0.0,
+            'construction_difficulty': 1.0,
+            'issues': []
+        }
+        
+        try:
+            # Check if area is large enough and flat enough
+            flat_area = self.find_flat_landing_zones(x, z, 5000, runway_length_required/2, max_slope_degrees=3.0)
+            if flat_area:
+                assessment['terrain_suitable'] = True
+                assessment['space_available'] = True
+                assessment['overall_score'] += 3.0
+            else:
+                assessment['issues'].append('Insufficient flat terrain for runway')
+                return assessment
+            
+            # Check terrain type
+            terrain_type = self.get_terrain_type(position)
+            if terrain_type in ['flat', 'rocky']:
+                assessment['overall_score'] += 2.0
+                assessment['construction_difficulty'] = 0.8
+            elif terrain_type == 'hilly':
+                assessment['overall_score'] += 1.0
+                assessment['construction_difficulty'] = 1.2
+            elif terrain_type == 'forested':
+                assessment['overall_score'] += 0.5
+                assessment['construction_difficulty'] = 1.5
+                assessment['issues'].append('Forest clearing required')
+            elif terrain_type == 'water':
+                assessment['issues'].append('Location in water')
+                return assessment
+            
+            # Check road accessibility
+            road_point = self.get_nearest_road_point(x, z)
+            if road_point:
+                if road_point['distance'] < 2000:
+                    assessment['accessibility'] = 'excellent'
+                    assessment['overall_score'] += 1.5
+                elif road_point['distance'] < 5000:
+                    assessment['accessibility'] = 'good'
+                    assessment['overall_score'] += 1.0
+                else:
+                    assessment['accessibility'] = 'poor'
+                    assessment['issues'].append('Remote location - road construction needed')
+            
+            # Strategic value assessment
+            # Higher elevation provides better strategic oversight
+            if y > 500:
+                assessment['strategic_value'] += 0.5
+            
+            # Check for nearby strategic features
+            buildings = self.get_buildings_in_area(x, z, 10000)
+            if buildings:
+                assessment['strategic_value'] += min(len(buildings) / 20.0, 1.0)
+            
+            # Distance from map center (generally more strategic)
+            map_center_x, map_center_z = self.tc.map_size[0] / 2, self.tc.map_size[1] / 2
+            distance_from_center = np.sqrt((x - map_center_x)**2 + (z - map_center_z)**2)
+            center_bonus = max(0, 1.0 - distance_from_center / 50000)  # 50km max range
+            assessment['strategic_value'] += center_bonus
+            
+            assessment['strategic_value'] = min(assessment['strategic_value'], 3.0)
+            assessment['overall_score'] += assessment['strategic_value']
+            
+        except Exception as e:
+            self._log(f"Warning: Airbase assessment incomplete: {e}")
+            assessment['issues'].append(f'Assessment error: {str(e)}')
+        
+        return assessment
+    
+    def find_tactical_positions(self, center_pos, search_radius, position_type, count=1, min_separation=1000):
+        """
+        Find multiple tactical positions of specified type.
+        
+        Args:
+            center_pos: Center of search area
+            search_radius: Search radius in meters
+            position_type: Type ('overwatch', 'support', 'ambush', 'rally_point')
+            count: Number of positions to find
+            min_separation: Minimum distance between positions
+            
+        Returns:
+            List of position dictionaries
+        """
+        positions = []
+        attempts = 0
+        max_attempts = count * 20
+        
+        while len(positions) < count and attempts < max_attempts:
+            attempts += 1
+            
+            # Generate candidate position
+            x_center, y_center, z_center = center_pos
+            from ..misc.math_utils import generate_random_position_in_circle
+            x, z = generate_random_position_in_circle(
+                (x_center, z_center), search_radius, search_radius * 0.3
+            )
+            y = self.tc.get_elevation_at_point(x, z)
+            
+            if y is None:
+                continue
+            
+            candidate_pos = (x, y, z)
+            
+            # Check minimum separation from existing positions
+            too_close = False
+            for existing_pos in positions:
+                dist = np.sqrt((x - existing_pos['position'][0])**2 + 
+                             (z - existing_pos['position'][2])**2)
+                if dist < min_separation:
+                    too_close = True
+                    break
+            
+            if too_close:
+                continue
+            
+            # Score position based on type
+            score = self._score_tactical_position(candidate_pos, position_type, center_pos)
+            
+            if score > 0.5:  # Minimum acceptable score
+                positions.append({
+                    'position': candidate_pos,
+                    'type': position_type,
+                    'score': score,
+                    'terrain_analysis': self._analyze_tactical_terrain(candidate_pos, position_type)
+                })
+        
+        # Sort by score and return best positions
+        positions.sort(key=lambda p: p['score'], reverse=True)
+        return positions[:count]
+    
+    def _score_tactical_position(self, position, position_type, reference_pos):
+        """Score position based on tactical purpose."""
+        x, y, z = position
+        ref_x, ref_y, ref_z = reference_pos
+        score = 0.0
+        
+        try:
+            terrain_type = self.get_terrain_type(position)
+            slope = abs(self.tc.get_slope_at_point(x, z))
+            elevation_diff = y - ref_y
+            
+            if position_type == 'overwatch':
+                # Overwatch positions need elevation and good fields of fire
+                if elevation_diff > 50:
+                    score += 2.0
+                if terrain_type in ['rocky', 'hilly']:
+                    score += 1.5
+                if slope < 15:
+                    score += 1.0
+                    
+            elif position_type == 'support':
+                # Support positions need protection and accessibility
+                if terrain_type in ['forested', 'rocky']:
+                    score += 1.5
+                road_point = self.get_nearest_road_point(x, z)
+                if road_point and road_point['distance'] < 1000:
+                    score += 1.0
+                    
+            elif position_type == 'ambush':
+                # Ambush positions need concealment and chokepoint proximity
+                if terrain_type in ['forested', 'rocky']:
+                    score += 2.0
+                if slope > 5 and slope < 25:  # Some elevation but not too steep
+                    score += 1.0
+                    
+            elif position_type == 'rally_point':
+                # Rally points need accessibility and some protection
+                if terrain_type in ['forested', 'hilly']:
+                    score += 1.0
+                if slope < 10:
+                    score += 1.5
+                road_point = self.get_nearest_road_point(x, z)
+                if road_point and road_point['distance'] < 2000:
+                    score += 1.0
+            
+        except Exception as e:
+            self._log(f"Warning: Tactical position scoring incomplete: {e}")
+        
+        return max(score, 0.0)
+    
+    def check_line_of_sight_tactical(self, pos1, pos2, max_range=None, terrain_masking=True):
+        """
+        Check line of sight between two positions for tactical purposes.
+        
+        Args:
+            pos1: First position (x, y, z)
+            pos2: Second position (x, y, z)
+            max_range: Maximum effective range in meters (None for unlimited)
+            terrain_masking: Whether to consider terrain blocking
+            
+        Returns:
+            Dict with LOS analysis
+        """
+        x1, y1, z1 = pos1
+        x2, y2, z2 = pos2
+        
+        # Calculate distance
+        distance = np.sqrt((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)
+        
+        result = {
+            'has_los': False,
+            'distance': distance,
+            'blocked_by_terrain': False,
+            'blocked_by_range': False,
+            'elevation_angle': 0.0
+        }
+        
+        # Check range limit
+        if max_range and distance > max_range:
+            result['blocked_by_range'] = True
+            return result
+        
+        # Calculate elevation angle
+        horizontal_distance = np.sqrt((x2 - x1)**2 + (z2 - z1)**2)
+        if horizontal_distance > 0:
+            result['elevation_angle'] = np.degrees(np.arctan((y2 - y1) / horizontal_distance))
+        
+        # Check terrain masking if enabled
+        if terrain_masking:
+            # Simple terrain blocking check - sample points along the path
+            steps = max(int(horizontal_distance / 100), 5)  # Sample every 100m or 5 points minimum
+            for i in range(1, steps):
+                t = i / steps
+                sample_x = x1 + t * (x2 - x1)
+                sample_z = z1 + t * (z2 - z1)
+                sample_y_path = y1 + t * (y2 - y1)  # Linear interpolation of path
+                sample_y_terrain = self.tc.get_elevation_at_point(sample_x, sample_z)
+                
+                if sample_y_terrain and sample_y_terrain > sample_y_path + 10:  # 10m clearance
+                    result['blocked_by_terrain'] = True
+                    return result
+        
+        result['has_los'] = True
+        return result
 

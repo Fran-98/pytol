@@ -494,7 +494,7 @@ class TerrainCalculator:
                     s, m, e = np.array(seg['s']), np.array(seg['m']), np.array(seg['e'])
                     # Sample points along the curve to create line segments
                     points = [get_bezier_point(s, m, e, t) for t in np.linspace(0, 1, 5)]
-                    for i in range(len(points) - 1):
+                    for i, _ in enumerate(points[:-1]):
                         all_segments.append((points[i], points[i+1]))
                 except (KeyError, TypeError, ValueError): 
                     continue

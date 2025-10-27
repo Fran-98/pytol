@@ -218,11 +218,11 @@ class MissionValidator:
         if len(waypoints) < 2:
             return ValidationResult(valid=True)  # Can't check spacing with < 2 waypoints
         
-        import math
-        for i in range(len(waypoints) - 1):
+        from ..misc.math_utils import calculate_2d_distance
+        for i, _ in enumerate(waypoints[:-1]):
             x1, _, z1 = waypoints[i]
             x2, _, z2 = waypoints[i + 1]
-            dist = math.sqrt((x2 - x1)**2 + (z2 - z1)**2)
+            dist = calculate_2d_distance((x1, z1), (x2, z2))
             
             if dist < min_spacing:
                 return ValidationResult(
