@@ -319,6 +319,32 @@ def get_available_vehicles() -> List[str]:
     return list(_EQUIP_DB.keys())
 
 
+def get_playable_vehicles() -> List[str]:
+    """
+    Get list of only playable vehicles in the equipment database.
+    
+    Returns only the vehicles that are player-controllable in VTOL VR:
+    - F/A-26B (Fighter/Attack)
+    - AH-94 (Attack Helicopter)
+    - EF-24G (Fighter)
+    - F-45A (Fighter)
+    - T-55 (Trainer)
+    - AV-42C (VTOL)
+    
+    Returns:
+        List of playable vehicle names that exist in the database
+    
+    Examples:
+        >>> playable = get_playable_vehicles()
+        >>> print(playable)
+        ['F/A-26B', 'F-45A', 'AH-94', 'AV-42C', 'EF-24G', 'T-55']
+    """
+    # Whitelist of playable vehicles in VTOL VR
+    playable = ['F/A-26B', 'AH-94', 'EF-24G', 'F-45A', 'T-55', 'AV-42C']
+    # Return only those that exist in the database
+    return [vehicle for vehicle in playable if vehicle in _EQUIP_DB]
+
+
 def get_equipment_for_vehicle(vehicle: str) -> List[str]:
     """
     Get all available equipment for a specific vehicle.

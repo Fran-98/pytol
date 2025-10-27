@@ -971,12 +971,16 @@ from pytol.resources.equipment import (
     EquipmentBuilder,
     LoadoutPresets,
     get_available_vehicles,
+    get_playable_vehicles,
     get_equipment_for_vehicle,
     search_equipment
 )
 
-# List vehicles:
+# List all vehicles (including AI):
 vehicles = get_available_vehicles()
+
+# List only playable vehicles (excludes AI):
+playable = get_playable_vehicles()  # Filters out AIUCAV, EBomberAI, etc.
 
 # Get equipment for vehicle:
 weapons = get_equipment_for_vehicle("FA-26B")

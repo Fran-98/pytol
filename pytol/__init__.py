@@ -44,6 +44,7 @@ from .resources.equipment import (
     EquipmentBuilder,
     LoadoutPresets,
     get_available_vehicles,
+    get_playable_vehicles,
     get_equipment_for_vehicle,
     search_equipment,
     EquipmentNotFoundError,
