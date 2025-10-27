@@ -93,6 +93,16 @@ class EquipmentBuilder:
     def __init__(self, vehicle: str):
         self.vehicle = vehicle
         
+        # Warn if using non-playable vehicle (likely AI-only)
+        playable = get_playable_vehicles()
+        if vehicle in _EQUIP_DB and vehicle not in playable:
+            import warnings
+            warnings.warn(
+                f"Vehicle '{vehicle}' is not player-controllable. "
+                f"Playable vehicles are: {', '.join(playable)}",
+                UserWarning
+            )
+        
         if vehicle not in VEHICLE_HARDPOINTS:
             # Create generic config for unknown vehicles
             equips = _EQUIP_DB.get(vehicle, [])
