@@ -43,6 +43,9 @@ This enables automation in mission creation, allowing for more dynamic and compl
 * **Scenario Primitives**: Helpers for generating common scenario setups like CSAR or base defense.
 * **2D Visualization** *(optional)*: Lightweight static mission maps and clean overviews using matplotlib - perfect for mission briefings.
 * **3D Visualization** *(optional)*: Interactive visualization of terrain and complete missions using PyVista.
+* **Event Sequences & Random Events**: Script ordered event chains (EventSequences) with looping and conditional logic, and define weighted random actions (RandomEvents) with per-action conditional graphs. Supports full nested conditional graphs for both features.
+* **Conditional Graphs**: All conditionals (including those in EventSequences and RandomEvents) support full graph emission, including methodParameters as nested blocks for VTS compatibility.
+* **Trigger/Proximity Improvements**: Proximity triggers only emit `waypoint = null` if no waypoint is provided, matching in-game editor output.
 
 ---
 
@@ -250,10 +253,7 @@ except Exception as e:
       * `find_riverbed_path(start_pos, end_pos, steps=100)`: Generates a path following the lowest terrain (simulating valleys). Returns `list` of `(x, y, z)`.
       * `find_bridge_crossing_path(start_pos, end_pos)`: Generates a road path explicitly using the nearest suitable bridge. Returns `list` of `(x, y, z)` or `None`.
       * `find_helicopter_battle_position(target_area, search_radius, min_dist=500, pop_up_alt=30)`: Finds a hide position for a pop-up helicopter attack. Returns `tuple (x, y, z)` or `None`.
-      * `generate_bombing_run_path(target_pos, entry_heading_deg, run_in_dist=5000, egress_dist=5000, altitude=1000)`: Creates IP-Target-Egress waypoints for a bombing run. Returns `dict {'ip':(x,y,z), 'target':(x,y,z), 'egress':(x,y,z)}`.
-      * `define_safe_air_corridor(start_pos, end_pos, width, altitude, known_threats)`: Analyzes an air corridor's safety from threats. Returns `dict {'path': list, 'safety_score': float}`.
-      * `find_naval_bombardment_position(coastal_target, standoff_distance, sea_level=1.0)`: Finds a sea position with LoS to a coastal target. Returns `tuple (x, y, z)` or `None`.
-      * `calculate_front_line_trace(friendly_units, enemy_units)`: Estimates the front line based on unit positions. Returns `list` of `(x, y, z)`.
+      * `generate_bombing_run_path(target_pos, entry_heading_deg, run_in_dist=5000, egress_dist=5000, altitude=1000)`: Creates IP-Target-Egress waypoints for a bombing run. Returns `dict {'ip':(x,y
       * `trace_supply_route(start_base_name, end_base_name)`: Finds a road path between two named bases (static prefabs). Returns `list` of `(x, y, z)` or `None`.
       * `analyze_route_vulnerability(road_path, check_width=100)`: Identifies vulnerable points (bridges, choke points) along a path. Returns `dict {'bridges': list, 'choke_points': list}`.
       * `find_radar_dead_zone(radar_positions, search_area_center, search_radius, altitude)`: Finds areas hidden from all listed radars at a specific altitude. Returns `list` of `(x, y, z)`.

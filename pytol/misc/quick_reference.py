@@ -908,6 +908,26 @@ position_val = PositionValidator(
 altitude_val = NumericValidator(min_value=0, max_value=20000)
 """
 
+# --- Unit Prefab Database Reference ---
+#
+# The authoritative list of all Allied and Enemy unit prefabs is generated from the Unity project and stored in:
+#   pytol/resources/unit_prefab_database.json
+#
+# Use these helpers from pytol.resources:
+#   from pytol.resources import get_all_unit_prefabs, get_allied_unit_prefabs, get_enemy_unit_prefabs
+#
+# - get_all_unit_prefabs(): returns all unique unit prefab names (Allied + Enemy)
+# - get_allied_unit_prefabs(): returns all Allied unit prefab names
+# - get_enemy_unit_prefabs(): returns all Enemy unit prefab names
+#
+# Example usage:
+#   all_units = get_all_unit_prefabs()
+#   allied_units = get_allied_unit_prefabs()
+#   enemy_units = get_enemy_unit_prefabs()
+#
+# This database is the reference for spawnable units, team compatibility, and prefab validation.
+#
+
 # ============================================================================
 # 5. DATA STRUCTURES & PARSERS
 # ============================================================================
@@ -1357,7 +1377,7 @@ When Implementing New Features:
    - Validate against existing missions
 """
 
-# ============================================================================
+# =============================================================================
 # END OF QUICK REFERENCE
 # ============================================================================
 
@@ -1479,6 +1499,103 @@ When updating existing code to use consolidated frameworks:
 """
 
 # =============================================================================
+# UNIT GROUPS (NATO Phonetic Alphabet)
+# =============================================================================
+
+"""
+Unit groups in VTOL VR MUST use NATO phonetic alphabet names.
+pytol validates this automatically and provides helpful error messages.
+
+Valid Group Names:
+-----------------
+from pytol import NATO_PHONETIC_ALPHABET
+
+# List of all valid names:
+# Alpha, Bravo, Charlie, Delta, Echo, Foxtrot, Golf, Hotel, India, Juliet,
+# Kilo, Lima, Mike, November, Oscar, Papa, Quebec, Romeo, Sierra, Tango,
+# Uniform, Victor, Whiskey, Xray, Yankee, Zulu
+
+Adding Units to Groups:
+----------------------
+from pytol import Mission
+from pytol.classes.units import create_unit
+
+mission = Mission(...)
+
+# Create units
+fighter = create_unit(
+    id_name="F-45A AI",
+    unit_name="Fighter 1",
+    team="Allied",
+    global_position=[0, 1500, 0],
+    rotation=[0, 0, 0]
+)
+unit_id = mission.add_unit(fighter, placement="airborne")
+
+# Add to group - validates NATO name automatically
+mission.add_unit_to_group("Allied", "Alpha", unit_id)   # ✓ Valid
+mission.add_unit_to_group("Enemy", "Bravo", unit_id)    # ✓ Valid
+
+# These will raise ValueError with helpful suggestions:
+mission.add_unit_to_group("Allied", "Fighters", unit_id)  # ✗ Invalid
+mission.add_unit_to_group("Allied", "Squad1", unit_id)    # ✗ Invalid
+
+Error Messages:
+--------------
+# Invalid name provides full list and suggestions:
+ValueError: Invalid unit group name 'Fighters'. VTOL VR requires NATO phonetic 
+alphabet names. Valid names: Alpha, Bravo, Charlie, Delta, Echo, Foxtrot, Golf, 
+Hotel, India, Juliet, Kilo, Lima, Mike, November, Oscar, Papa, Quebec, Romeo, 
+Sierra, Tango, Uniform, Victor, Whiskey, Xray, Yankee, Zulu.
+
+# Close match provides suggestion:
+ValueError: Invalid unit group name 'Br'. VTOL VR requires NATO phonetic alphabet 
+names. Valid names: ... Did you mean: Bravo?
+
+Best Practices:
+--------------
+# Check available names programmatically
+from pytol import NATO_PHONETIC_ALPHABET
+
+for i, name in enumerate(NATO_PHONETIC_ALPHABET[:4]):
+    # Create squadron with sequential NATO names
+    mission.add_unit_to_group("Allied", name, unit_ids[i])
+
+# Alpha, Bravo, Charlie, Delta squadrons created automatically
+"""
+
+"""
+Group Prefix Codes and Placement Modes
+-------------------------------------
+VTOL VR stores group membership with a prefix that encodes the group's placement type.
+This library assigns the correct prefix automatically based on each group's first member's
+editorPlacementMode and warns if a group mixes different placement modes.
+
+Prefix mapping used by VTOL VR (and pytol):
+- Ground → prefix "0;"
+- Sea/Water (naval/carrier/boats) → prefix "1;"
+- Air (airborne/other) → prefix "2;"
+
+Notes:
+- Mixed placement groups are supported but discouraged; pytol will pick the prefix from the
+    first member and log a warning with the mixed modes encountered.
+- Each group automatically gets a required `<GroupName>_SETTINGS` block with `syncAltSpawns = False`.
+
+Example:
+        # Air group → prefix 2;
+        mission.add_unit_to_group("Allied", "Alpha", fighter1)
+        mission.add_unit_to_group("Allied", "Alpha", fighter2)
+
+        # Ground group → prefix 0;
+        mission.add_unit_to_group("Enemy", "Delta", tank1)
+        mission.add_unit_to_group("Enemy", "Delta", tank2)
+
+        # Sea group → prefix 1;
+        mission.add_unit_to_group("Enemy", "Echo", boat1)
+        mission.add_unit_to_group("Enemy", "Echo", boat2)
+"""
+
+# =============================================================================
 # PERFORMANCE TIPS
 # =============================================================================
 
@@ -1508,3 +1625,68 @@ print("pytol Consolidated Frameworks Quick Reference Guide")
 print("=" * 60)
 print("Import this module for quick examples and patterns!")
 print("See CONSOLIDATION_SUMMARY.md for comprehensive documentation.")
+
+"""
+Event Sequences & Random Events
+------------------------------
+EventSequences allow you to script ordered event chains with optional looping and conditional logic. RandomEvents let you define weighted random actions, each with its own conditional graph.
+
+# EventSequence with whileConditional (loop while counter < 5)
+from pytol.classes.mission_objects import EventSequence, SequenceEvent, EventTarget, ParamInfo, GlobalValue
+from pytol.classes.conditionals import Sccglobalvalue
+
+loop_cond = Sccglobalvalue(gv="counter", comparison="Less_Than", c_value=5)
+seq = EventSequence(
+    id=1,
+    sequence_name="Counter Loop",
+    start_immediately=True,
+    while_loop=True,
+    while_conditional=loop_cond,  # Full graph embedded in SEQUENCE
+    events=[
+        SequenceEvent(
+            node_name="Increment Counter",
+            delay=2.0,
+            actions=[
+                EventTarget(
+                    target_type="GlobalValue",
+                    target_id="counter",
+                    event_name="Increment",
+                    params=[ParamInfo(name="value", type="float", value=1.0)]
+                )
+            ]
+        )
+    ]
+)
+mission.add_event_sequence(seq)
+
+# RandomEvent with nested conditional graph
+from pytol.classes.mission_objects import RandomEvent, RandomEventAction
+cond = Sccglobalvalue(gv="counter", comparison="Greater_Than", c_value=2)
+re = RandomEvent(
+    id=1,
+    name="Random Test",
+    action_options=[
+        RandomEventAction(
+            id=0,
+            action_name="Action A",
+            fixed_weight=50,
+            conditional=cond,  # Full graph embedded in ACTION
+            actions=[...]
+        ),
+        RandomEventAction(
+            id=1,
+            action_name="Action B",
+            fixed_weight=50,
+            conditional=None,  # Placeholder (id=0)
+            actions=[...]
+        )
+    ]
+)
+mission.add_random_event(re)
+
+Notes:
+- If you pass a Conditional object to while_conditional or RandomEventAction.conditional, pytol emits the full graph as a nested CONDITIONAL block.
+- If you pass a string ID, only a reference (or placeholder) is emitted.
+- methodParameters in simple conditionals are now always formatted as a nested block for full VTS compatibility.
+- Proximity triggers only emit `waypoint = null` if no waypoint is provided.
+"""

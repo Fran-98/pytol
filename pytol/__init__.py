@@ -1,7 +1,7 @@
 __version__ = "0.2.0"
 
 # --- Core Mission Building ---
-from .parsers.vts_builder import Mission
+from .parsers.vts_builder import Mission, NATO_PHONETIC_ALPHABET
 from .parsers.vtc_builder import Campaign
 
 # --- Object Creation Factories ---
@@ -60,6 +60,14 @@ from .resources.base_spawn_points import (
     get_reference_points,
     compute_world_from_base,
     get_spawn_by_category
+)
+
+# --- Static Prefabs API ---
+from .resources.resources import (
+    get_static_prefabs_database,
+    list_static_prefabs,
+    list_static_prefab_names,
+    get_static_prefab,
 )
 
 from .misc.logger import create_logger

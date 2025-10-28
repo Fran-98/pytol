@@ -8,7 +8,10 @@ generated_city_blocks.json
 generated_static_prefabs.json
 test_campaings
 test_ideas
+test_missions
 plans_and_tracking
+*test_missions*
+*tmp*
 tools
 *.venv*
 CODEBASE_REVIEW.md

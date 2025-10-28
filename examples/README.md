@@ -51,6 +51,25 @@ python example_visualization.py
 
 Provides interactive 3D terrain and mission visualization.
 
+## Export to VTOL VR
+
+After saving a mission with `Mission.save_mission(...)`, you can copy it directly into the game's CustomScenarios using:
+
+```python
+from pytol.parsers.vts_builder import Mission
+
+# ... build your mission as usual and call save_mission
+mission_dir = mission.save_mission('.test_missions/test_missions_out')
+
+# Then export to VTOL VR CustomScenarios
+mission.export_to_custom_scenarios(
+	dest_name='my_scenario_folder',                    # optional, defaults to scenario_id
+	vtol_directory=r'F:\\SteamLibrary\\steamapps\\common\\VTOL VR'  # optional if VTOL_VR_DIR env var is set
+)
+```
+
+This copies the `.vts`, the referenced map folder, and any resources into `VTOL VR/CustomScenarios/<dest_name>` so you can load it in the editor or game immediately.
+
 ## Requirements
 
 Most examples require:

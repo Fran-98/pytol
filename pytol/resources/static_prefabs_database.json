@@ -1,0 +1,232 @@
+{
+  "generated_at": "2025-10-27T21:50:47.168976Z",
+  "count": 32,
+  "prefabs": [
+    {
+      "name": "CargoCrate",
+      "relative_path": "CargoCrate.prefab",
+      "tags": [
+        "prop"
+      ]
+    },
+    {
+      "name": "ConcreteBarrierX1",
+      "relative_path": "ConcreteBarrierX1.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "ConcreteBarrierX3",
+      "relative_path": "ConcreteBarrierX3.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "ConcreteBarrierX7",
+      "relative_path": "ConcreteBarrierX7.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "ConcreteWallX1",
+      "relative_path": "ConcreteWallX1.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "ConcreteWallX3",
+      "relative_path": "ConcreteWallX3.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "ConcreteWallX5",
+      "relative_path": "ConcreteWallX5.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "DestrTower",
+      "relative_path": "DestrTower.prefab",
+      "tags": [
+        "destructible",
+        "tower"
+      ]
+    },
+    {
+      "name": "Destructible_Crane",
+      "relative_path": "Destructible_Crane.prefab",
+      "tags": [
+        "destructible"
+      ]
+    },
+    {
+      "name": "Destructible_OilContainer",
+      "relative_path": "Destructible_OilContainer.prefab",
+      "tags": [
+        "destructible"
+      ]
+    },
+    {
+      "name": "Destructible_OilRig",
+      "relative_path": "Destructible_OilRig.prefab",
+      "tags": [
+        "destructible"
+      ]
+    },
+    {
+      "name": "ewRadarBuilding",
+      "relative_path": "ewRadarBuilding.prefab",
+      "tags": [
+        "radar",
+        "structure"
+      ]
+    },
+    {
+      "name": "FarpA",
+      "relative_path": "FarpA.prefab",
+      "tags": [
+        "farp"
+      ]
+    },
+    {
+      "name": "FuelTank",
+      "relative_path": "FuelTank.prefab",
+      "tags": [
+        "prop"
+      ]
+    },
+    {
+      "name": "helipad",
+      "relative_path": "helipad.prefab",
+      "tags": [
+        "landing"
+      ]
+    },
+    {
+      "name": "helipadSmall",
+      "relative_path": "helipadSmall.prefab",
+      "tags": [
+        "landing"
+      ]
+    },
+    {
+      "name": "HescoX16",
+      "relative_path": "HescoX16.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "HescoX16T",
+      "relative_path": "HescoX16T.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "HescoX4",
+      "relative_path": "HescoX4.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "HescoX8",
+      "relative_path": "HescoX8.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "HescoX8T",
+      "relative_path": "HescoX8T.prefab",
+      "tags": [
+        "defense"
+      ]
+    },
+    {
+      "name": "MilTent",
+      "relative_path": "MilTent.prefab",
+      "tags": [
+        "camp"
+      ]
+    },
+    {
+      "name": "platform0_1x1",
+      "relative_path": "platform0_1x1.prefab",
+      "tags": [
+        "platform"
+      ]
+    },
+    {
+      "name": "platform1",
+      "relative_path": "platform1.prefab",
+      "tags": [
+        "platform"
+      ]
+    },
+    {
+      "name": "platform2_2x2",
+      "relative_path": "platform2_2x2.prefab",
+      "tags": [
+        "platform"
+      ]
+    },
+    {
+      "name": "StaticSpectatorSpot",
+      "relative_path": "StaticSpectatorSpot.prefab",
+      "tags": [
+        "training"
+      ]
+    },
+    {
+      "name": "Tut_BasicFlight",
+      "relative_path": "Tut_BasicFlight.prefab",
+      "tags": [
+        "training"
+      ]
+    },
+    {
+      "name": "Tut_GettingStarted",
+      "relative_path": "Tut_GettingStarted.prefab",
+      "tags": [
+        "training"
+      ]
+    },
+    {
+      "name": "Tut_Weapons1",
+      "relative_path": "Tut_Weapons1.prefab",
+      "tags": [
+        "training"
+      ]
+    },
+    {
+      "name": "VFTraining1Prefab",
+      "relative_path": "VFTraining1Prefab.prefab",
+      "tags": [
+        "training"
+      ]
+    },
+    {
+      "name": "VTOL4Crashed",
+      "relative_path": "VTOL4Crashed.prefab",
+      "tags": [
+        "wreck"
+      ]
+    },
+    {
+      "name": "WatchTower",
+      "relative_path": "WatchTower.prefab",
+      "tags": [
+        "tower"
+      ]
+    }
+  ]
+}

@@ -160,6 +160,7 @@ class EventSequence:
     sequence_name: str        # Name of the sequence
     start_immediately: bool = False # Whether the sequence starts automatically at mission start
     while_loop: bool = False      # Whether the sequence loops back to the start after finishing
+    while_conditional: Optional[Union[Conditional, str]] = None # Optional conditional to evaluate each loop iteration
     events: List[SequenceEvent] = field(default_factory=list) # Ordered list of steps
 
 @dataclass

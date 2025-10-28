@@ -765,3 +765,70 @@ This creates randomized tactical missions with professional 2D maps automaticall
 - [Terrain Behavior Documentation](terrain_behavior.md) - Height sampling and city behavior
 - [API Reference](../README.md) - Complete API documentation
 
+## Event Sequences & Random Events
+
+Pytol supports advanced event scripting using EventSequences (ordered event chains with optional looping and while-conditionals) and RandomEvents (weighted random actions, each with its own conditional graph).
+
+### EventSequence Example
+```python
+from pytol.classes.mission_objects import EventSequence, SequenceEvent, EventTarget, ParamInfo
+from pytol.classes.conditionals import Sccglobalvalue
+
+loop_cond = Sccglobalvalue(gv="counter", comparison="Less_Than", c_value=5)
+seq = EventSequence(
+    id=1,
+    sequence_name="Counter Loop",
+    start_immediately=True,
+    while_loop=True,
+    while_conditional=loop_cond,  # Full graph embedded in SEQUENCE
+    events=[
+        SequenceEvent(
+            node_name="Increment Counter",
+            delay=2.0,
+            actions=[
+                EventTarget(
+                    target_type="GlobalValue",
+                    target_id="counter",
+                    event_name="Increment",
+                    params=[ParamInfo(name="value", type="float", value=1.0)]
+                )
+            ]
+        )
+    ]
+)
+mission.add_event_sequence(seq)
+```
+
+### RandomEvent Example
+```python
+from pytol.classes.mission_objects import RandomEvent, RandomEventAction
+cond = Sccglobalvalue(gv="counter", comparison="Greater_Than", c_value=2)
+re = RandomEvent(
+    id=1,
+    name="Random Test",
+    action_options=[
+        RandomEventAction(
+            id=0,
+            action_name="Action A",
+            fixed_weight=50,
+            conditional=cond,  # Full graph embedded in ACTION
+            actions=[...]
+        ),
+        RandomEventAction(
+            id=1,
+            action_name="Action B",
+            fixed_weight=50,
+            conditional=None,  # Placeholder (id=0)
+            actions=[...]
+        )
+    ]
+)
+mission.add_random_event(re)
+```
+
+**Notes:**
+- If you pass a Conditional object to while_conditional or RandomEventAction.conditional, pytol emits the full graph as a nested CONDITIONAL block.
+- If you pass a string ID, only a reference (or placeholder) is emitted.
+- methodParameters in simple conditionals are now always formatted as a nested block for full VTS compatibility.
+- Proximity triggers only emit `waypoint = null` if no waypoint is provided.
+
