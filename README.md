@@ -190,6 +190,14 @@ except Exception as e:
 
 -----
 
+-----
+
+## Examples
+
+Small runnable examples are available in the `examples/` directory. They demonstrate common workflows and quick visualizers.
+
+- `examples/example_pillow_visualizer.py` — shows how to create a simple mission and generate a Pillow-based overview image using `MapPillowVisualizer`. The visualizer returns a `PIL.Image.Image` and can optionally save to disk by passing `save=True`.
+
 ## Core Components Documentation
 
 ### `TerrainCalculator` (`pytol.terrain.terrain_calculator`)
