@@ -19,6 +19,10 @@ class EventTarget:
     event_name: str
     method_name: Optional[str] = None
     params: List[ParamInfo] = field(default_factory=list)
+    # Editor uses altTargetIdx to point to alternate-spawn index for units/targets.
+    # Common editor defaults: -2 for Unit targets (means use primary unit spawn),
+    # -1 for UnitGroup/System/etc. We'll emit this value in the VTS builder.
+    alt_target_idx: Optional[int] = None
 
 # --- Base and Trigger Objects ---
 @dataclass
