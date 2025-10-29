@@ -16,6 +16,7 @@ import importlib.util
 
 # Check for matplotlib (2D visualization)
 MATPLOTLIB_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
+PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
 
 # Check for pyvista (3D visualization) - test actual import
 try:
@@ -30,6 +31,10 @@ __all__ = []
 if MATPLOTLIB_AVAILABLE:
     from .map2d import Map2DVisualizer, save_mission_map
     __all__.extend(['Map2DVisualizer', 'save_mission_map'])
+
+if PIL_AVAILABLE:
+    from .map_pillow import MapPillowVisualizer, save_mission_map as save_mission_map_pillow
+    __all__.extend(['MapPillowVisualizer', 'save_mission_map_pillow'])
 
 if PYVISTA_AVAILABLE:
     from .visualizer import MissionVisualizer, TerrainVisualizer

@@ -44,6 +44,41 @@ viz.save_terrain_overview("terrain_heatmap.png", style='heatmap')
 viz.save_spawn_points_detail("spawn_points.png", base_index=0)
 ```
 
+## Lightweight Pillow visualizer
+
+For quick previews, web-friendly thumbnails or environments where matplotlib
+is not available, pytol provides a very small Pillow-based visualizer:
+
+```python
+from pytol.visualization import MapPillowVisualizer, save_mission_map
+
+# Create visualizer for a mission or TerrainCalculator
+viz = MapPillowVisualizer(mission_or_terrain, size=(1024, 1024), flip_x=False, flip_y=True)
+
+# By default the Pillow visualizer returns a PIL Image (no file written):
+img = viz.save_mission_overview()
+
+# To write to disk set save=True and provide a filename
+img = viz.save_mission_overview(filename='overview.png', save=True)
+
+# Convenience helper also returns the PIL Image (pass save=True to write file):
+img = save_mission_map(mission, filename='overview.png', save=True)
+```
+
+Key behaviors:
+- Returns: PIL.Image.Image object (always). Use `save=True` + `filename` to persist.
+- City overlay: uses the original `height.png` G channel (from the TerrainCalculator)
+    to mark city pixels. This preserves the exact pixel locations that appear as
+    city on the original heightmap — city pixels are rendered as grey tiles.
+- Roads: rendered as outlined polylines with endpoint caps so short segments
+    remain visible at small sizes.
+- Flips: pass `flip_x`/`flip_y` when constructing `MapPillowVisualizer` or use the
+    helper parameters to match editor/map coordinate handedness.
+- Markers: unit/waypoint/base icons have narrow black outlines for legibility.
+
+This visualizer is intentionally lightweight and aimed at quick previews and
+web/export usage. For publication-quality maps, prefer `Map2DVisualizer`.
+
 ### Terrain-Only View
 
 ```python
