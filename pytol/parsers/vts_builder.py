@@ -1974,8 +1974,43 @@ class Mission:
             from pytol.classes.units import field_names
             fields_c = ""
             derived_group = reverse_group_map.get(uid)
-            explicit_group = u.unit_fields.get('unit_group') if hasattr(u, 'unit_fields') else None
-            group_to_emit = derived_group or explicit_group or ""
+            # Preserve explicit None values from unit_fields (we want to emit
+            # the literal 'null' in the VTS when unit_group was explicitly
+            # set to None). Do not coerce None -> "" via `or`.
+            # Merge any spawn-provided raw unit_fields (u_data may contain a
+            # unit_fields dict passed at add_unit time) with the dataclass
+            # computed `u.unit_fields`. Prefers dataclass values when both
+            # present but still recognizes keys provided at either level.
+            u_unit_fields_raw = u_data.get('unit_fields') if isinstance(u_data.get('unit_fields'), dict) else {}
+            u_unit_fields = getattr(u, 'unit_fields', {}) or {}
+            merged_unit_fields = {}
+            merged_unit_fields.update(u_unit_fields_raw)
+            merged_unit_fields.update(u_unit_fields)
+            explicit_group = None
+            if isinstance(merged_unit_fields, dict):
+                # Prefer snake_case key first
+                if 'unit_group' in merged_unit_fields:
+                    explicit_group = merged_unit_fields.get('unit_group')
+                elif 'unitGroup' in merged_unit_fields:
+                    explicit_group = merged_unit_fields.get('unitGroup')
+            # Only fall back to empty string when the unit_group key is absent
+            # and no derived group exists. If the key exists with value None,
+            # keep None so it serializes to 'null'.
+            if derived_group is not None:
+                group_to_emit = derived_group
+            elif ('unit_group' in u_unit_fields) or ('unitGroup' in u_unit_fields):
+                # Treat explicit empty-string group as unset -> None so we
+                # serialize 'null' rather than an empty token.
+                if isinstance(explicit_group, str) and explicit_group.strip() == '':
+                    group_to_emit = None
+                else:
+                    group_to_emit = explicit_group
+            else:
+                # If no explicit or derived group exists, emit null so the
+                # VTS contains the literal 'null' token rather than an empty
+                # string. This matches the editor's representation for unset
+                # unit groups and avoids empty-string corruption.
+                group_to_emit = None
 
             # Build the full field order for this unit's class, respecting inheritance
             field_order = []
@@ -1995,8 +2030,20 @@ class Mission:
             # unit, prefer its exact tokens (which already include unitGroup) and
             # skip emitting a duplicate here.
             ref_has_unit = bool(reference_unit_fields and u.unit_name in reference_unit_fields)
-            if not ref_has_unit and ("unit_group" in field_order or "unitGroup" in field_order or "unit_group" in u.unit_fields or "unitGroup" in u.unit_fields):
-                fields_c += f"\t\t\t\tunitGroup = {group_to_emit}{eol}"
+            # Decide whether to emit a UnitFields token for unitGroup. We
+            # consider the merged_unit_fields as well as the dataclass-derived
+            # field_order to determine if the editor expects a unitGroup token.
+            if not ref_has_unit and ("unit_group" in field_order or "unitGroup" in field_order or "unit_group" in merged_unit_fields or "unitGroup" in merged_unit_fields):
+                # When group_to_emit is None we must emit the literal 'null'
+                # token in the VTS file. Otherwise emit the value as-is to
+                # preserve parity with editor exports.
+                # Treat any falsy/empty value as unset -> emit 'null'. This is
+                # intentionally permissive to cover empty strings, empty lists,
+                # or other falsy tokens that don't represent a valid group.
+                if not group_to_emit:
+                    fields_c += f"\t\t\t\tunitGroup = null{eol}"
+                else:
+                    fields_c += f"\t\t\t\tunitGroup = {group_to_emit}{eol}"
                 for k in ["unit_group", "unitGroup"]:
                     if k in field_order:
                         field_order.remove(k)
@@ -2105,6 +2152,11 @@ class Mission:
             # those exact tokens for parity. Otherwise, format values normally.
             ref_spawner_for_unit = reference_unit_spawners.get(u.unit_name, {}) if reference_unit_spawners else {}
             spawner_lines_list: List[str] = []
+            # Final sanity: convert any accidentally-emitted empty 'unitGroup = '
+            # tokens into explicit nulls so the editor receives 'unitGroup = null'.
+            # This is a last-resort fix to catch stray empty emissions that slipped
+            # through upstream checks.
+            fields_c = fields_c.replace(f"\t\t\t\tunitGroup = {eol}", f"\t\t\t\tunitGroup = null{eol}")
             spawner_lines_list.append(f"\t\tUnitSpawner{eol}\t\t{{{eol}")
             spawner_lines_list.append(f"\t\t\tunitName = {u.unit_name}{eol}")
             # globalPosition
@@ -2356,12 +2408,20 @@ class Mission:
                         # Ensure Unit targetID is the integer unitInstanceID
                         target_id_val = int(target.target_id) # Should already be int from action helper
 
-                    targets_c += f"\t\t\t\t\tEventTarget{eol}\t\t\t\t\t{{{eol}" \
-                                f"\t\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                                f"\t\t\t\t\t\ttargetID = {target_id_val}{eol}" \
-                                f"\t\t\t\t\t\teventName = {target.event_name}{eol}" \
-                                f"\t\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                                f"{params_c}\t\t\t\t\t}}{eol}"
+                    # Determine default altTargetIdx if not explicitly provided
+                    if target.alt_target_idx is not None:
+                        alt_idx_val = int(target.alt_target_idx)
+                    else:
+                        # Editor convention: Unit targets use -2, others use -1
+                        alt_idx_val = -2 if target.target_type == "Unit" else -1
+
+                    targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
+                                f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
+                                f"\t\t\t\t\ttargetID = {target_id_val}{eol}" \
+                                f"\t\t\t\t\teventName = {target.event_name}{eol}" \
+                                f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
+                                f"\t\t\t\t\taltTargetIdx = {alt_idx_val}{eol}" \
+                                f"{params_c}\t\t\t\t}}{eol}"
 
                 # Format TimedEventInfo block
                 events_c += f"\t\t\tTimedEventInfo{eol}\t\t\t{{{eol}" \
@@ -2424,10 +2484,11 @@ class Mission:
                         # Format ParamInfo block (add ParamAttrInfo if present)
                         # Convert list values to semicolon format (e.g., [2] -> "2;")
                         formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
+                        # ParamInfo should be indented to align with EventTarget properties (5 tabs)
                         param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
-                                           f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                           f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
-                                           f"\t\t\t\t\t\tname = {p.name}{eol}"
+                                        f"\t\t\t\t\t\ttype = {p.type}{eol}" \
+                                        f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
+                                        f"\t\t\t\t\t\tname = {p.name}{eol}"
                         if p.attr_info:
                              attr_type = p.attr_info.get('type')
                              attr_data = p.attr_info.get('data')
@@ -2782,12 +2843,12 @@ class Mission:
                     # ... etc. for Waypoint, Path, Conditional ...
 
                     # Format EventTarget
-                    targets_c += f"\t\t\t\t\tEventTarget{eol}\t\t\t\t\t{{{eol}" \
-                                f"\t\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                                f"\t\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
-                                f"\t\t\t\t\t\teventName = {target.event_name}{eol}" \
-                                f"\t\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                                f"\t\t\t\t\t\taltTargetIdx = -1{eol}" \
+                    targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
+                                f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
+                                f"\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
+                                f"\t\t\t\t\teventName = {target.event_name}{eol}" \
+                                f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
+                                f"\t\t\t\t\taltTargetIdx = -1{eol}" \
                                 f"{params_c}\t\t\t\t\t}}{eol}"
 
                 # Format the EVENT_INFO block for this ACTION

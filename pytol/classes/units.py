@@ -182,15 +182,29 @@ class Unit:
                     elif isinstance(val, list):
                         self.unit_fields[f_name] = (';'.join(map(str, val)) + ';')
                     else:
-                        self.unit_fields[f_name] = val
+                        # Treat empty unit_group strings as None so downstream
+                        # serialization can emit a null instead of an empty
+                        # string. Only apply this special-case for the
+                        # 'unit_group' field.
+                        if f_name == 'unit_group' and isinstance(val, str) and val == '':
+                            self.unit_fields[f_name] = None
+                        else:
+                            self.unit_fields[f_name] = val
                     fields_to_delete.append(f_name)
-        common_fields_to_move = ['unitGroup', 'equips']
+        # Use snake_case names matching dataclass fields. When unit_group is
+        # present but an empty string, prefer storing None so the VTS builder
+        # can emit a null instead of an empty string.
+        common_fields_to_move = ['unit_group', 'equips']
         for common_f_name in common_fields_to_move:
             if (hasattr(self, common_f_name) and (common_f_name not in subclass_field_names)):
                 val = getattr(self, common_f_name)
                 if (val is not None):
                     if ((common_f_name == 'equips') and isinstance(val, list)):
                         self.unit_fields[common_f_name] = (';'.join(map(str, val)) + ';')
+                    elif (common_f_name == 'unit_group') and isinstance(val, str) and val == '':
+                        # Explicit empty unit_group should be represented as null
+                        # in the serialized output rather than an empty string.
+                        self.unit_fields[common_f_name] = None
                     else:
                         self.unit_fields[common_f_name] = val
                     fields_to_delete.append(common_f_name)
@@ -246,7 +260,7 @@ class AIAircraftSpawn(AIUnitSpawnEquippable):
     'Dataclass for unit AIAircraftSpawn'
     unit_group: Optional[str] = None
     voice_profile: Optional[str] = None
-    player_commands_mode: Optional[Literal['Unit_Group_Only', 'Force_Allow', 'Force_Disallow']] = None
+    player_commands_mode: Optional[Literal['Unit_Group_Only', 'Force_Allow', 'Force_Disallow']] = 'Unit_Group_Only'
     default_behavior: Optional[Literal['Orbit', 'Path', 'Parked', 'TakeOff']] = None
     initial_speed: Optional[float] = None
     default_nav_speed: Optional[float] = None
@@ -255,7 +269,7 @@ class AIAircraftSpawn(AIUnitSpawnEquippable):
     orbit_altitude: Optional[float] = None
     fuel: Optional[float] = 100.0
     auto_refuel: Optional[bool] = True
-    auto_r_t_b: Optional[bool] = None
+    auto_r_t_b: Optional[bool] = True
     default_radar_enabled: Optional[bool] = True
     allow_jamming_at_will: Optional[bool] = False
     parked_start_mode: Optional[Literal['FlightReady', 'Cold']] = None
@@ -382,7 +396,7 @@ class PlayerSpawn(UnitSpawn):
     'Dataclass for unit PlayerSpawn'
     start_mode: Optional[Literal['Cold', 'FlightReady', 'FlightAP']] = None
     initial_speed: Optional[float] = 0.0
-    unit_group: Optional[str] = None
+    unit_group: Optional[str] = 'null'
 
 field_names.update({
     'UnitSpawn': ['receive_friendly_damage'],
