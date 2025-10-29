@@ -28,6 +28,7 @@ from pytol.resources.resources import get_static_prefabs_database
 
 # --- Constants ---
 from pytol.classes.conditionals import CLASS_TO_ID
+import re
 
 # NATO Phonetic Alphabet - Valid unit group names in VTOL VR
 NATO_PHONETIC_ALPHABET = [
@@ -1454,10 +1455,23 @@ class Mission:
         group = self.unit_groups.setdefault(team_upper, {})
         group.setdefault(group_name, []).append(unit_instance_id)
 
-    def add_objective(self, objective_obj: Objective) -> int:
-        """Adds an Objective object, ensuring its ID is tracked."""
+    def add_objective(self, objective_obj: Objective, team: Optional[str] = None) -> int:
+        """Adds an Objective object, ensuring its ID is tracked.
+
+        Optional team hint can be provided to mark this objective as belonging
+        to a specific team (e.g., 'Enemy' or 'Allied'). This is used when
+        emitting the OBJECTIVES_OPFOR block for multiplayer missions.
+        """
         if not isinstance(objective_obj, Objective):
             raise TypeError("objective_obj must be an Objective dataclass.")
+        # Store team hint (if provided) inside the objective's fields dict
+        if team is not None:
+            try:
+                objective_obj.fields['team'] = team
+            except Exception:
+                # Be conservative: if fields is missing, set attribute directly
+                setattr(objective_obj, 'team', team)
+
         # Objective ID is required and comes *from* the object
         assigned_id = self._get_or_assign_id(objective_obj, "_pytol_obj")
         self.logger.info(f"Objetivo '{objective_obj.name}' (ID: {assigned_id}) tracked.")
@@ -1618,7 +1632,7 @@ class Mission:
         """Adds a RandomEvent object (container for actions) to the mission."""
         if not isinstance(re_obj, RandomEvent):
             raise TypeError("re_obj must be a RandomEvent dataclass.")
-        if any(re.id == re_obj.id for re in self.random_events):
+        if any(rnd.id == re_obj.id for rnd in self.random_events):
             self.logger.warning(f"RandomEvent ID {re_obj.id} already exists.")
         # Optional: Check linked conditionals within action options
         for action_option in re_obj.action_options:
@@ -2780,9 +2794,9 @@ class Mission:
             
         # --- RANDOM EVENTS ---
         re_c = ""
-        for re in self.random_events: # re is RandomEvent (the container)
+        for rnd in self.random_events: # rnd is RandomEvent (the container)
             actions_c = "" # String for all ACTION blocks within this RANDOM_EVENT
-            for action in re.action_options: # action is RandomEventAction
+            for action in rnd.action_options: # action is RandomEventAction
                 targets_c = ""
                 # Format EventTargets within this action
                 for target in action.actions:
@@ -2801,7 +2815,7 @@ class Mission:
                             if found_id is not None:
                                 param_value = found_id
                             else:
-                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in RandomEvent {re.id}, Action {action.id}")
+                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in RandomEvent {rnd.id}, Action {action.id}")
                         # Format ParamInfo (with ParamAttrInfo)
                         # Convert list values to semicolon format (e.g., [2] -> "2;")
                         formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
@@ -2834,12 +2848,12 @@ class Mission:
                               if found_id is not None:
                                   target_id_val = found_id
                               else:
-                                  self.logger.warning(f"Could not find unitInstanceID for Unit target ID in RandomEvent {re.id}, Action {action.id}")
+                                  self.logger.warning(f"Could not find unitInstanceID for Unit target ID in RandomEvent {rnd.id}, Action {action.id}")
                          elif not isinstance(target.target_id, int):
                               try:
                                   target_id_val = int(target.target_id)
                               except ValueError:
-                                  self.logger.warning(f"Unit target ID not int for RandomEvent {re.id}, Action {action.id}")
+                                  self.logger.warning(f"Unit target ID not int for RandomEvent {rnd.id}, Action {action.id}")
                     # ... etc. for Waypoint, Path, Conditional ...
 
                     # Format EventTarget
@@ -2881,7 +2895,7 @@ class Mission:
                                 adjusted.append("\t\t\t\t" + ln)
                         conditional_block_inner = "".join(adjusted)
                     except Exception as ex:
-                        self.logger.warning(f"Failed to embed nested conditional for RandomEvent {re.id} Action {action.id}: {ex}")
+                        self.logger.warning(f"Failed to embed nested conditional for RandomEvent {rnd.id} Action {action.id}: {ex}")
 
 
                 # Format the ACTION block
@@ -2898,8 +2912,8 @@ class Mission:
 
             # Format the outer RANDOM_EVENT block
             re_c += f"\t\tRANDOM_EVENT{eol}\t\t{{{eol}" \
-                    f"\t\t\tid = {re.id}{eol}" \
-                    f"\t\t\tnote = {re.name}{eol}" \
+                    f"\t\t\tid = {rnd.id}{eol}" \
+                    f"\t\t\tnote = {rnd.name}{eol}" \
                     f"{actions_c}\t\t}}{eol}" # Include all ACTION blocks
 
         # --- EVENT SEQUENCES ---
@@ -3194,7 +3208,34 @@ class Mission:
         vts += _format_block("TimedEventGroups", c["TimedEventGroups"]) 
         vts += _format_block("TRIGGER_EVENTS", c["TRIGGER_EVENTS"])
         vts += _format_block("OBJECTIVES", c["OBJECTIVES"])
-        vts += _format_block("OBJECTIVES_OPFOR", "") # TODO
+        # --- OBJECTIVES_OPFOR ---
+        # Build OBJECTIVES_OPFOR by extracting Objective sub-blocks from the
+        # previously generated OBJECTIVES content and including only those
+        # objectives that were marked with a team hint (e.g., 'Enemy' or 'OPFOR').
+        objs_raw = c.get("OBJECTIVES", "") or ""
+        opfor_c = ""
+        if objs_raw.strip():
+            # Match each Objective block (uses two tabs at start for section entries)
+            obj_blocks = re.findall(r"(\t\tObjective\s*\{\n(?:.*?\n)*?\t\t\})", objs_raw, flags=re.DOTALL)
+            selected = []
+            for blk in obj_blocks:
+                m = re.search(r"objectiveID\s*=\s*(\d+)", blk)
+                if not m:
+                    continue
+                oid = int(m.group(1))
+                obj = self._objectives_map.get(oid)
+                team = None
+                if obj is not None:
+                    # Prefer fields['team'] hint, fall back to attribute
+                    if isinstance(getattr(obj, 'fields', None), dict):
+                        team = obj.fields.get('team')
+                    if team is None:
+                        team = getattr(obj, 'team', None)
+                if isinstance(team, str) and team.lower() in ("enemy", "opfor"):
+                    selected.append(blk)
+            opfor_c = "".join(selected)
+
+        vts += _format_block("OBJECTIVES_OPFOR", opfor_c)
         vts += _format_block("StaticObjects", c["StaticObjects"])
         vts += _format_block("Conditionals", c["Conditionals"])       
         vts += _format_block("ConditionalActions", c["ConditionalActions"]) 
