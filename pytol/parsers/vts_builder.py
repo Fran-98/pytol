@@ -1655,7 +1655,8 @@ class Mission:
         
         eol = "\n"
         indent_conditional = "\t\t" # Indent for CONDITIONAL block
-        indent_comp = "\t\t\t"     # Indent for COMP block contents
+        indent_comp = "\t\t\t"     # Indent for COMP block (label and brace)
+        indent_comp_inner = indent_comp + "\t"  # Inner lines inside COMP should be one more tab
 
         # Check if this is an empty base Conditional (no COMPs)
         if cond.__class__ == Conditional:
@@ -1672,9 +1673,9 @@ class Mission:
 
         # --- Build Inner COMP block content ---
         comp_content_lines = []
-        comp_content_lines.append(f"{indent_comp}id = 0")
-        comp_content_lines.append(f"{indent_comp}type = {cond_type_str}")
-        comp_content_lines.append(f"{indent_comp}uiPos = (0, 0, 0)") # <-- ADDED uiPos
+        comp_content_lines.append(f"{indent_comp_inner}id = 0")
+        comp_content_lines.append(f"{indent_comp_inner}type = {cond_type_str}")
+        comp_content_lines.append(f"{indent_comp_inner}uiPos = (0, 0, 0)") # <-- ADDED uiPos
 
         if not is_dataclass(cond):
             self.logger.warning(f"Conditional object {cond_id} is not a dataclass.")
@@ -1694,12 +1695,13 @@ class Mission:
                 if key_name_snake == 'method_parameters' and isinstance(value, list):
                     key_name_final = _snake_to_camel(key_name_snake)
                     param_value = ";".join(map(str, value)) + ";"
-                    indent_param = "\t\t\t\t"  # 4 tabs for nested value
+                    # methodParameters label and brace align with inner COMP lines; value is one deeper
+                    indent_param = indent_comp_inner + "\t"
                     method_params_block = (
-                        f"{indent_comp}{key_name_final}{eol}"
-                        f"{indent_comp}{{{eol}"
+                        f"{indent_comp_inner}{key_name_final}{eol}"
+                        f"{indent_comp_inner}{{{eol}"
                         f"{indent_param}value = {param_value}{eol}"
-                        f"{indent_comp}}}"
+                        f"{indent_comp_inner}}}"
                     )
                     continue
                 
@@ -1725,7 +1727,7 @@ class Mission:
                 else:
                     formatted_value = _format_value(value)
 
-                comp_content_lines.append(f"{indent_comp}{key_name_final} = {formatted_value}")
+                comp_content_lines.append(f"{indent_comp_inner}{key_name_final} = {formatted_value}")
             
             # Add methodParameters block AFTER other fields (especially after isNot)
             if method_params_block:
@@ -1751,7 +1753,8 @@ class Mission:
         """
         eol = "\n"
         indent_conditional = "\t\t"
-        indent_comp = "\t\t\t"  # For COMP block AND its content (both at 3 tabs!)
+        indent_comp = "\t\t\t"  # For COMP block (label and brace)
+        indent_comp_inner = indent_comp + "\t"  # Inner lines inside COMP should be one more tab
         
         # Build all COMP blocks
         comp_blocks = []
@@ -1763,9 +1766,9 @@ class Mission:
             
             # Build COMP block content
             comp_content_lines = []
-            comp_content_lines.append(f"{indent_comp}id = {comp_id}")
-            comp_content_lines.append(f"{indent_comp}type = {cond_type_str}")
-            comp_content_lines.append(f"{indent_comp}uiPos = (0, 0, 0)")
+            comp_content_lines.append(f"{indent_comp_inner}id = {comp_id}")
+            comp_content_lines.append(f"{indent_comp_inner}type = {cond_type_str}")
+            comp_content_lines.append(f"{indent_comp_inner}uiPos = (0, 0, 0)")
             
             if is_dataclass(cond):
                 # Collect all field outputs (except method_parameters which needs special handling)
@@ -1790,12 +1793,13 @@ class Mission:
                     # Store it separately to add AFTER isNot
                     if key_name_snake == 'method_parameters' and isinstance(value, list):
                         param_value = ";".join(map(str, value)) + ";"
-                        indent_param = "\t\t\t\t"  # 4 tabs for nested value
+                        # methodParameters label and brace align with inner COMP lines; value is one deeper
+                        indent_param = indent_comp_inner + "\t"
                         method_params_block = (
-                            f"{indent_comp}{key_name_final}{eol}"
-                            f"{indent_comp}{{{eol}"
+                            f"{indent_comp_inner}{key_name_final}{eol}"
+                            f"{indent_comp_inner}{{{eol}"
                             f"{indent_param}value = {param_value}{eol}"
-                            f"{indent_comp}}}"
+                            f"{indent_comp_inner}}}"
                         )
                         continue
                     
@@ -1820,7 +1824,7 @@ class Mission:
                 
                 # Add regular fields first
                 for key_snake, key_final, formatted_val in regular_fields:
-                    comp_content_lines.append(f"{indent_comp}{key_final} = {formatted_val}")
+                    comp_content_lines.append(f"{indent_comp_inner}{key_final} = {formatted_val}")
                 
                 # Add methodParameters block AFTER other fields (especially after isNot)
                 if method_params_block:
@@ -2563,10 +2567,18 @@ class Mission:
             
             # For Conditional objectives, always include both conditionals (even if null)
             if o.type == "Conditional":
-                success_cond = o.fields.get('successConditional') or o.fields.get('success_conditional')
-                fields_content += f"\t\t\t\tsuccessConditional = {_format_value(success_cond) if success_cond else 'null'}{eol}"
-                fail_cond = o.fields.get('failConditional') or o.fields.get('fail_conditional')
-                fields_content += f"\t\t\t\tfailConditional = {_format_value(fail_cond) if fail_cond else 'null'}{eol}"
+                # Use explicit None checks because valid conditional IDs can be 0
+                if 'successConditional' in o.fields:
+                    success_cond = o.fields.get('successConditional')
+                else:
+                    success_cond = o.fields.get('success_conditional', None)
+                fields_content += f"\t\t\t\tsuccessConditional = {_format_value(success_cond) if success_cond is not None else 'null'}{eol}"
+
+                if 'failConditional' in o.fields:
+                    fail_cond = o.fields.get('failConditional')
+                else:
+                    fail_cond = o.fields.get('fail_conditional', None)
+                fields_content += f"\t\t\t\tfailConditional = {_format_value(fail_cond) if fail_cond is not None else 'null'}{eol}"
             else:
                 # For other objective types, only add if they exist
                 if 'successConditional' in o.fields or 'success_conditional' in o.fields:
