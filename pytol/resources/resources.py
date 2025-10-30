@@ -1,9 +1,7 @@
 import json
 from importlib import resources
 from PIL import Image
-from pathlib import Path
 from ..misc.logger import create_logger
-import os
 
 _logger = create_logger(verbose=False, name="Resources")
 
@@ -14,7 +12,7 @@ PREFAB_DB = 'individual_prefabs_database.json'
 VEHICLE_EQUIP_DB = 'vehicle_equip_database.json'
 NOISE_IMAGE = 'noise.png'
 STATIC_PREFABS_DB = 'static_prefabs_database.json'
-_UNIT_PREFAB_DB_PATH = os.path.join(os.path.dirname(__file__), "unit_prefab_database.json")
+UNIT_PREFAB_DB_PATH = "unit_prefab_database.json"
 
 def load_json_data(file_name: str = 'data.json') -> dict:
     """Loads a JSON file from the package data."""
@@ -43,7 +41,7 @@ def load_image_asset(file_name: str = 'noise.png'):
 
 def load_unit_prefab_database():
     """Load the unit prefab database (Allied/Enemy) from JSON."""
-    with open(_UNIT_PREFAB_DB_PATH, "r", encoding="utf-8") as f:
+    with open(UNIT_PREFAB_DB_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 _unit_prefab_db = load_unit_prefab_database()

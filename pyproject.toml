@@ -1,6 +1,6 @@
 [project]
 name = "pytol"
-version = "0.4.0"
+version = "0.5.0"
 authors = [
   { name="Fran-98", email="franciscopvargas98@gmail.com" },
 ]
@@ -28,6 +28,7 @@ viz = [
 ]
 
 viz-light = [
+    "pytol",
     "matplotlib"
 ]
 
