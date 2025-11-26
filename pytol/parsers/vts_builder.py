@@ -1049,6 +1049,7 @@ class Mission:
             target_list_or_dict = self.paths
             obj_type_name = "Path"
         elif isinstance(obj, (Conditional, ConditionalTree)):
+            id_type = "int"  # Conditionals use integer IDs, not strings
             target_map = self._conditionals_map
             target_list_or_dict = self.conditionals # This is a dict
             obj_type_name = "Conditional"
@@ -1114,11 +1115,12 @@ class Mission:
                 target_map[obj_py_id] = assigned_id
             else: # int ID
                 target_map[assigned_id] = obj
-        elif isinstance(target_list_or_dict, dict): # Conditionals
-             if assigned_id in target_list_or_dict: # Should only happen if user provided duplicate string ID
+        elif isinstance(target_list_or_dict, dict): # Conditionals (now using int IDs)
+             if assigned_id in target_list_or_dict: # Should only happen if user provided duplicate ID
                  raise ValueError(f"{obj_type_name} ID '{assigned_id}' already exists.")
              target_list_or_dict[assigned_id] = obj
-             target_map[obj_py_id] = assigned_id # Also map Python ID -> string ID
+             target_map[assigned_id] = obj  # Map int ID -> object
+             target_map[obj_py_id] = assigned_id  # Also map Python ID -> int ID for lookups
         else:
             # Should not happen
             raise TypeError("Internal error: target_list_or_dict is not list or dict.")
@@ -1571,16 +1573,23 @@ class Mission:
         # Store the source path for later copying during save_mission()
         self.resource_manifest[res_id] = path
 
-    def add_conditional(self, conditional_obj, conditional_id: Optional[str] = None) -> str:
-        """Adds a Conditional object or ConditionalTree, assigning an ID if needed."""
+    def add_conditional(self, conditional_obj, conditional_id: Optional[Union[str, int]] = None) -> int:
+        """Adds a Conditional object or ConditionalTree, assigning an integer ID if needed."""
         from pytol.classes.conditionals import ConditionalTree
         
         if not isinstance(conditional_obj, (Conditional, ConditionalTree)):
             raise TypeError("conditional_obj must be a Conditional dataclass or ConditionalTree.")
         assigned_id = self._get_or_assign_id(conditional_obj, "_pytol_cond", conditional_id)
-        # Conditionals don't have an 'id' field in their dataclass
-        self.logger.info(f"Conditional added with ID '{assigned_id}'.")
-        return assigned_id
+        # Conditionals now use integer IDs, not strings
+        # Ensure we return an integer
+        if isinstance(assigned_id, str) and assigned_id.startswith("_pytol_cond_"):
+            # Legacy string ID format - extract number (shouldn't happen with new code)
+            try:
+                assigned_id = int(assigned_id.replace("_pytol_cond_", ""))
+            except ValueError:
+                raise ValueError(f"Conditional ID must be integer, got: {assigned_id}")
+        self.logger.info(f"Conditional added with ID {assigned_id}.")
+        return int(assigned_id)
 
     def add_global_value(self, gv_obj: GlobalValue):
         """Adds a GlobalValue object to the mission."""
@@ -2772,9 +2781,13 @@ class Mission:
                 elif target.target_type == "Conditional":
                      if isinstance(target.target_id, Conditional):
                           target_id_val = self._get_or_assign_id(target.target_id, "_pytol_cond") # Ensure added, get ID
-                     elif not isinstance(target_id_val, str):
-                          self.logger.warning(f"Conditional target ID should be string, got {target_id_val}")
-                          target_id_val = str(target_id_val)
+                     elif not isinstance(target_id_val, int):
+                         # Conditionals now use integer IDs
+                         try:
+                             target_id_val = int(target_id_val)
+                         except (ValueError, TypeError):
+                             self.logger.warning(f"Conditional target ID should be integer, got {target_id_val}")
+                             target_id_val = int(target_id_val) if target_id_val else 0
                 # TODO: Add resolutions for Timed_Events, UnitGroup, System etc. if needed
                 # --- End Target ID Resolution ---
 
@@ -2797,6 +2810,20 @@ class Mission:
             cond_id_val = ca.conditional_id
             if isinstance(ca.conditional_id, Conditional):
                 cond_id_val = self._get_or_assign_id(ca.conditional_id, "_pytol_cond") # Ensure added, get ID
+            # Ensure conditional_id is an integer (conditionals now use int IDs)
+            if isinstance(cond_id_val, str):
+                # Legacy string ID - try to convert
+                if cond_id_val.startswith("_pytol_cond_"):
+                    try:
+                        cond_id_val = int(cond_id_val.replace("_pytol_cond_", ""))
+                    except ValueError:
+                        self.logger.warning(f"Could not convert conditional ID '{cond_id_val}' to integer")
+                else:
+                    try:
+                        cond_id_val = int(cond_id_val)
+                    except ValueError:
+                        self.logger.warning(f"Could not convert conditional ID '{cond_id_val}' to integer")
+            cond_id_val = int(cond_id_val) if not isinstance(cond_id_val, int) else cond_id_val
 
             ca_c += f"\t\tConditionalAction{eol}\t\t{{{eol}" \
                     f"\t\t\tid = {ca.id}{eol}" \

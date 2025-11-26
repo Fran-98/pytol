@@ -1,233 +1,277 @@
-"""Validation and error handling for procedural mission generation."""
+"""Validation utilities for procedural mission generation."""
 
-from __future__ import annotations
+import logging
+from typing import Dict, List, Any, Optional, Tuple
+from pytol.procedural.world_state import WorldState
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
-
-from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
-
-
-class ProceduralGenerationError(Exception):
-    """Base exception for procedural generation failures."""
-    pass
+logger = logging.getLogger(__name__)
 
 
-class InvalidTargetError(ProceduralGenerationError):
-    """Raised when no valid target location can be found."""
-    pass
-
-
-class InvalidRouteError(ProceduralGenerationError):
-    """Raised when route parameters are invalid."""
-    pass
-
-
-class InvalidSpawnLocationError(ProceduralGenerationError):
-    """Raised when unit spawn locations cannot be determined."""
-    pass
-
-
-@dataclass
-class ValidationResult:
-    """Result of a validation check."""
-    valid: bool
-    message: str = ""
+class ValidationReport:
+    """Container for validation results."""
     
-    def raise_if_invalid(self, error_class: type = ProceduralGenerationError):
-        """Raise an error if validation failed."""
-        if not self.valid:
-            raise error_class(self.message)
-
-
-class MissionValidator:
-    """Validates mission generation parameters and results."""
+    def __init__(self):
+        self.errors: List[str] = []
+        self.warnings: List[str] = []
+        self.info: List[str] = []
     
-    def __init__(self, helper: MissionTerrainHelper):
-        self.helper = helper
-        self.tc = helper.tc
+    def add_error(self, message: str):
+        """Add an error message."""
+        self.errors.append(message)
+        logger.error(f"Validation Error: {message}")
     
-    def validate_target_location(
-        self, 
-        target: Optional[Tuple[float, float, float]],
-        mission_type: str
-    ) -> ValidationResult:
-        """
-        Validate that a target location is suitable.
+    def add_warning(self, message: str):
+        """Add a warning message."""
+        self.warnings.append(message)
+        logger.warning(f"Validation Warning: {message}")
+    
+    def add_info(self, message: str):
+        """Add an info message."""
+        self.info.append(message)
+        logger.info(f"Validation Info: {message}")
+    
+    def is_valid(self) -> bool:
+        """Check if validation passed (no errors)."""
+        return len(self.errors) == 0
+    
+    def get_summary(self) -> str:
+        """Get a summary of validation results."""
+        lines = []
+        lines.append(f"Validation: {len(self.errors)} errors, {len(self.warnings)} warnings, {len(self.info)} info")
         
-        Args:
-            target: (x, y, z) coordinates, or None
-            mission_type: The mission type
+        if self.errors:
+            lines.append("\nErrors:")
+            for error in self.errors[:10]:
+                lines.append(f"  - {error}")
+        
+        if self.warnings:
+            lines.append("\nWarnings:")
+            for warning in self.warnings[:10]:
+                lines.append(f"  - {warning}")
+        
+        return "\n".join(lines)
+
+
+def validate_world_state(wsm: WorldState) -> ValidationReport:
+    """Validate a WorldState for common issues.
+    
+    Args:
+        wsm: WorldState instance to validate
+        
+    Returns:
+        ValidationReport with errors, warnings, and info
+    """
+    report = ValidationReport()
+    
+    # Check units
+    if len(wsm.units) == 0:
+        report.add_warning("No units in WorldState")
+    else:
+        report.add_info(f"WorldState contains {len(wsm.units)} units")
+        
+        # Check for units without placement info
+        units_without_placement = []
+        for unit_key in wsm.units.keys():
+            if unit_key not in wsm.unit_placements:
+                units_without_placement.append(unit_key)
+        
+        if units_without_placement:
+            report.add_warning(f"{len(units_without_placement)} units missing placement info")
+    
+    # Check objectives
+    if len(wsm.objectives) == 0:
+        report.add_warning("No objectives in WorldState")
+    else:
+        report.add_info(f"WorldState contains {len(wsm.objectives)} objectives")
+        
+        # Check objectives have valid target labels
+        for obj_key, obj_info in wsm.objectives.items():
+            if isinstance(obj_info, dict):
+                obj_type = obj_info.get("type", "")
+                target_label = obj_info.get("target_label")
+                
+                if obj_type == "Destroy" and not target_label:
+                    report.add_warning(f"Destroy objective '{obj_key}' missing target_label")
+    
+    # Check territory system
+    if len(wsm.territory_zones) == 0:
+        report.add_warning("No territory zones defined")
+    else:
+        total_zones = sum(len(zones) for zones in wsm.territory_zones.values())
+        report.add_info(f"WorldState contains {total_zones} territory zones")
+    
+    # Check static structures
+    static_structures = wsm.assets.get("static_structures", {})
+    if isinstance(static_structures, dict):
+        structures = static_structures.get("structures", {})
+        if structures:
+            report.add_info(f"WorldState contains {len(structures)} static structures")
             
-        Returns:
-            ValidationResult indicating if target is valid
-        """
-        if target is None:
-            return ValidationResult(
-                valid=False,
-                message="No target location was selected. Map may be too restricted or all candidates rejected."
+            # Check structures have units
+            for struct_id, struct_info in structures.items():
+                if struct_id not in wsm.units:
+                    report.add_error(f"Static structure '{struct_id}' not in units")
+    
+    # Check key points
+    key_points = wsm.assets.get("mission_key_points", {})
+    if isinstance(key_points, dict):
+        points = key_points.get("points", {})
+        if points:
+            report.add_info(f"WorldState contains {len(points)} mission key points")
+    
+    return report
+
+
+def validate_mission_compilation(
+    mission,
+    wsm: WorldState,
+    unit_id_map: Dict[str, int]
+) -> ValidationReport:
+    """Validate that WorldState was correctly compiled to Mission.
+    
+    Args:
+        mission: Mission instance
+        wsm: Original WorldState
+        unit_id_map: Mapping from WSM keys to mission unit IDs
+        
+    Returns:
+        ValidationReport with errors and warnings
+    """
+    report = ValidationReport()
+    
+    # Check unit mapping
+    wsm_unit_keys = set(wsm.units.keys())
+    mapped_keys = set(unit_id_map.keys())
+    
+    missing = wsm_unit_keys - mapped_keys
+    if missing:
+        report.add_error(f"{len(missing)} units not mapped to mission: {list(missing)[:5]}")
+    
+    extra = mapped_keys - wsm_unit_keys
+    if extra:
+        report.add_warning(f"{len(extra)} mapped keys not in WSM units")
+    
+    # Check mission units
+    if hasattr(mission, 'units'):
+        mission_unit_count = len(mission.units)
+        if mission_unit_count != len(unit_id_map):
+            report.add_warning(
+                f"Mission unit count ({mission_unit_count}) != mapped count ({len(unit_id_map)})"
             )
+    
+    # Check objectives
+    if hasattr(mission, 'objectives'):
+        mission_obj_count = len(mission.objectives) if mission.objectives else 0
+        wsm_obj_count = len(wsm.objectives)
         
-        tx, ty, tz = target
-        
-        # Check if target is within map bounds [0, map_size]
-        map_size = self.tc.total_map_size_meters
-        if tx < 0 or tz < 0 or tx > map_size or tz > map_size:
-            return ValidationResult(
-                valid=False,
-                message=f"Target location ({tx:.0f}, {tz:.0f}) is outside map bounds (0..{map_size:.0f}m)"
+        if mission_obj_count != wsm_obj_count:
+            report.add_warning(
+                f"Mission objective count ({mission_obj_count}) != WSM count ({wsm_obj_count})"
             )
-        
-        # Check if target height is valid
-        if ty < self.tc.min_height:
-            return ValidationResult(
-                valid=False,
-                message=f"Target location is below minimum terrain height ({ty:.1f} < {self.tc.min_height:.1f})"
-            )
-        
-        if ty > self.tc.max_height + 100:  # allow some margin
-            return ValidationResult(
-                valid=False,
-                message=f"Target location is above maximum terrain height ({ty:.1f} > {self.tc.max_height:.1f})"
-            )
-        
-        # For strike/cas missions, warn if target appears to be in water
-        if mission_type in ("strike", "cas", "sead"):
-            if ty <= self.tc.min_height + 2.0:
-                return ValidationResult(
-                    valid=False,
-                    message=f"Target location for {mission_type} mission appears to be in water (y={ty:.1f}m)"
+    else:
+        report.add_warning("Mission has no objectives attribute")
+    
+    # Check target resolution for objectives
+    for obj_key, obj_info in wsm.objectives.items():
+        if isinstance(obj_info, dict):
+            obj_type = obj_info.get("type", "")
+            target_label = obj_info.get("target_label")
+            
+            if obj_type == "Destroy" and target_label:
+                from pytol.procedural.compiler_adapter import _resolve_target_label_to_unit_ids
+                
+                resolved = _resolve_target_label_to_unit_ids(
+                    target_label,
+                    unit_id_map,
+                    wsm.units,
+                    wsm
                 )
-        
-        return ValidationResult(valid=True)
+                
+                if not resolved:
+                    report.add_warning(
+                        f"Objective '{obj_key}' target_label '{target_label}' resolved to 0 units"
+                    )
     
-    def validate_route(
-        self,
-        ingress_dist: float,
-        egress_dist: float,
-        map_size: float
-    ) -> ValidationResult:
-        """
-        Validate route distance parameters.
+    # Check unit positions
+    if hasattr(mission, 'units'):
+        invalid_positions = []
+        # mission.units can be a list or dict
+        units_to_check = mission.units.values() if isinstance(mission.units, dict) else mission.units
+        for idx, unit_obj in enumerate(list(units_to_check)[:10]):
+            try:
+                pos = unit_obj.global_position
+                if not pos or len(pos) != 3:
+                    invalid_positions.append(idx)
+                elif any(not isinstance(x, (int, float)) for x in pos):
+                    invalid_positions.append(idx)
+            except Exception:
+                invalid_positions.append(idx)
         
-        Args:
-            ingress_dist: Distance from target to ingress point (meters)
-            egress_dist: Distance from target to egress point (meters)
-            map_size: Total map size in meters
-            
-        Returns:
-            ValidationResult indicating if route is valid
-        """
-        min_dist = 1000.0  # 1km minimum
-        max_dist = map_size * 0.8  # don't exceed 80% of map size
-        
-        if ingress_dist < min_dist:
-            return ValidationResult(
-                valid=False,
-                message=f"Ingress distance too short: {ingress_dist:.0f}m (minimum {min_dist:.0f}m)"
-            )
-        
-        if egress_dist < min_dist:
-            return ValidationResult(
-                valid=False,
-                message=f"Egress distance too short: {egress_dist:.0f}m (minimum {min_dist:.0f}m)"
-            )
-        
-        if ingress_dist > max_dist:
-            return ValidationResult(
-                valid=False,
-                message=f"Ingress distance exceeds map size: {ingress_dist:.0f}m (max {max_dist:.0f}m for {map_size:.0f}m map)"
-            )
-        
-        if egress_dist > max_dist:
-            return ValidationResult(
-                valid=False,
-                message=f"Egress distance exceeds map size: {egress_dist:.0f}m (max {max_dist:.0f}m for {map_size:.0f}m map)"
-            )
-        
-        return ValidationResult(valid=True)
+        if invalid_positions:
+            report.add_warning(f"{len(invalid_positions)} units have invalid positions")
     
-    def validate_spawn_location(
-        self,
-        spawn_x: float,
-        spawn_z: float,
-        unit_type: str,
-        team: str
-    ) -> ValidationResult:
-        """
-        Validate a unit spawn location.
-        
-        Args:
-            spawn_x: X coordinate
-            spawn_z: Z coordinate
-            unit_type: Type of unit being spawned
-            team: Team the unit belongs to
-            
-        Returns:
-            ValidationResult indicating if spawn location is valid
-        """
-        # Check map bounds [0, map_size]
-        map_size = self.tc.total_map_size_meters
-        if spawn_x < 0 or spawn_z < 0 or spawn_x > map_size or spawn_z > map_size:
-            return ValidationResult(
-                valid=False,
-                message=f"Spawn location ({spawn_x:.0f}, {spawn_z:.0f}) for {unit_type} is outside map bounds (0..{map_size:.0f}m)"
-            )
-        
-        # Get terrain height
-        try:
-            spawn_y = self.tc.get_terrain_height(spawn_x, spawn_z)
-        except Exception as e:
-            return ValidationResult(
-                valid=False,
-                message=f"Cannot query terrain height at ({spawn_x:.0f}, {spawn_z:.0f}): {e}"
-            )
-        
-        # Check if height is valid
-        if spawn_y < self.tc.min_height or spawn_y > self.tc.max_height + 50:
-            return ValidationResult(
-                valid=False,
-                message=f"Spawn location has invalid height: {spawn_y:.1f}m (range: {self.tc.min_height:.1f} to {self.tc.max_height:.1f})"
-            )
-        
-        # Ground units shouldn't spawn in water
-        if "Aircraft" not in unit_type and "Sea" not in unit_type:
-            if spawn_y <= self.tc.min_height + 2.0:
-                return ValidationResult(
-                    valid=False,
-                    message=f"Ground unit {unit_type} would spawn in water at ({spawn_x:.0f}, {spawn_z:.0f}, y={spawn_y:.1f}m)"
-                )
-        
-        return ValidationResult(valid=True)
+    return report
+
+
+def validate_generated_mission(wsm: WorldState) -> ValidationReport:
+    """Comprehensive validation of generated mission WorldState.
     
-    def validate_waypoint_spacing(
-        self,
-        waypoints: list,
-        min_spacing: float = 500.0
-    ) -> ValidationResult:
-        """
-        Validate that waypoints are reasonably spaced.
+    This is called after PCG.realize_plan() to ensure quality.
+    
+    Args:
+        wsm: WorldState instance to validate
         
-        Args:
-            waypoints: List of (x, y, z) waypoint coordinates
-            min_spacing: Minimum distance between waypoints in meters
-            
-        Returns:
-            ValidationResult indicating if spacing is valid
-        """
-        if len(waypoints) < 2:
-            return ValidationResult(valid=True)  # Can't check spacing with < 2 waypoints
-        
-        from ..misc.math_utils import calculate_2d_distance
-        for i, _ in enumerate(waypoints[:-1]):
-            x1, _, z1 = waypoints[i]
-            x2, _, z2 = waypoints[i + 1]
-            dist = calculate_2d_distance((x1, z1), (x2, z2))
-            
-            if dist < min_spacing:
-                return ValidationResult(
-                    valid=False,
-                    message=f"Waypoints {i} and {i+1} are too close: {dist:.0f}m (minimum {min_spacing:.0f}m)"
-                )
-        
-        return ValidationResult(valid=True)
+    Returns:
+        ValidationReport with errors, warnings, and info
+    """
+    report = validate_world_state(wsm)
+    
+    # Additional checks specific to generated missions
+    
+    # Check unit spacing (avoid excessive clustering)
+    unit_positions = []
+    for unit_key in wsm.units.keys():
+        placement = wsm.unit_placements.get(unit_key, {})
+        pos = placement.get("position")
+        if pos and len(pos) >= 3:
+            unit_positions.append((pos[0], pos[2]))
+    
+    # Check for units too close together (within 10m)
+    from pytol.misc.math_utils import calculate_2d_distance
+    too_close = []
+    for i, pos1 in enumerate(unit_positions):
+        for j, pos2 in enumerate(unit_positions[i+1:], i+1):
+            dist = calculate_2d_distance(pos1, pos2)
+            if dist < 10.0:  # 10m minimum spacing
+                too_close.append((i, j, dist))
+    
+    if too_close:
+        report.add_warning(f"{len(too_close)} unit pairs are too close (<10m)")
+    
+    # Check key points are reasonable
+    key_points = wsm.assets.get("mission_key_points", {})
+    if isinstance(key_points, dict):
+        points = key_points.get("points", {})
+        if len(points) == 0:
+            report.add_warning("No mission key points defined")
+    
+    # Check static structures are at valid locations
+    static_structures = wsm.assets.get("static_structures", {})
+    if isinstance(static_structures, dict):
+        structures = static_structures.get("structures", {})
+        for struct_id, struct_info in structures.items():
+            pos = struct_info.get("position")
+            if pos and len(pos) >= 3:
+                # Check not in water (rough check)
+                if pos[1] < 0:
+                    report.add_warning(f"Static structure '{struct_id}' appears to be in water (y={pos[1]})")
+    
+    return report
+
+
+__all__ = [
+    "ValidationReport",
+    "validate_world_state",
+    "validate_mission_compilation",
+    "validate_generated_mission",
+]

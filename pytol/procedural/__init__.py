@@ -1,29 +1,29 @@
 """
-Procedural mission generation scaffolding for pytol.
+Procedural mission generation system for pytol.
 
-This package provides high-level building blocks to assemble coherent,
-terrain-aware VTOL VR missions while keeping a clean contract with a future
-dynamic campaign engine.
-
-Modules are intentionally lightweight and typed; most classes expose small,
-clear interfaces and can be swapped out without breaking the facade.
+This package provides a seeded, reproducible pipeline for generating
+coherent, terrain-aware VTOL VR missions:
+- MissionDirector: Grammar-based narrative planning
+- PCG: Procedural content generation with intelligent placement
+- WorldState: In-memory mission state database
+- CompilerAdapter: Conversion from WorldState to Mission objects
 """
 
-from .spec import ProceduralMissionSpec, TargetBias
-from .engine import ProceduralMissionEngine
-from .validation import (
-    ProceduralGenerationError,
-    InvalidTargetError,
-    InvalidRouteError,
-    InvalidSpawnLocationError,
-)
+from .mission_director import MissionConfig, MissionPlan, PlanObjective, MissionDirector
+from .pcg import PCG
+from .world_state import WorldState
+from .compiler_adapter import apply_world_state_to_mission
+from .unit_templates import UnitLibrary
+from .grammar import Grammar
 
 __all__ = [
-    "ProceduralMissionSpec",
-    "ProceduralMissionEngine",
-    "TargetBias",
-    "ProceduralGenerationError",
-    "InvalidTargetError",
-    "InvalidRouteError",
-    "InvalidSpawnLocationError",
+    "MissionConfig",
+    "MissionPlan",
+    "PlanObjective",
+    "MissionDirector",
+    "PCG",
+    "WorldState",
+    "apply_world_state_to_mission",
+    "UnitLibrary",
+    "Grammar",
 ]

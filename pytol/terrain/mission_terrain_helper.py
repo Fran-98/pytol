@@ -33,7 +33,87 @@ class MissionTerrainHelper:
         self.logger = create_logger(verbose=self.verbose, name="MissionTerrainHelper")
         self._bridges = None
         self._pois_cache = None
+        # Get map size for scale-aware calculations
+        self.map_size = getattr(terrain_calculator, 'total_map_size_meters', 196608.0)
         self._log("MissionTerrainHelper initialized.")
+    
+    def get_unit_spacing_requirement(self, unit_type_str: str) -> float:
+        """Get minimum spacing requirement for a unit type in meters.
+        
+        This accounts for unit footprint size - trucks need less space than SAM sites.
+        This should be used when placing multiple units to prevent overlap/clustering.
+        
+        Args:
+            unit_type_str: Unit type string (e.g., "sam_site", "truck", "artillery")
+        
+        Returns:
+            Minimum spacing in meters
+        """
+        unit_lower = unit_type_str.lower()
+        
+        # Large systems need more space
+        if any(kw in unit_lower for kw in ["sam", "radar", "launcher", "battery", "air_defense"]):
+            return 2000.0  # 2km spacing for SAM sites (large radar coverage)
+        elif any(kw in unit_lower for kw in ["artillery", "howitzer", "mlrs"]):
+            return 1000.0  # 1km spacing for artillery (indirect fire safety zone)
+        elif any(kw in unit_lower for kw in ["tank", "apc", "vehicle", "armor"]):
+            return 300.0  # 300m spacing for vehicles (tactical separation)
+        elif any(kw in unit_lower for kw in ["truck", "transport", "logistic", "convoy"]):
+            return 100.0  # 100m spacing for trucks (can convoy closer)
+        elif any(kw in unit_lower for kw in ["infantry", "soldier", "squad"]):
+            return 50.0  # 50m spacing for infantry
+        else:
+            return 500.0  # Default 500m spacing for unknown units
+    
+    def scale_search_radius_by_map_size(self, base_radius: float) -> float:
+        """Scale search radius based on map size.
+        
+        On large maps (196km+), use full radius. On smaller maps, scale down proportionally.
+        This ensures tactical distances remain meaningful across different map scales.
+        
+        Args:
+            base_radius: Base search radius in meters
+        
+        Returns:
+            Scaled search radius appropriate for this map size
+        """
+        # Scale based on map size relative to typical 196km map
+        typical_map_size = 196608.0
+        if self.map_size >= typical_map_size:
+            # Large map, can use full radius
+            return base_radius * 1.0
+        else:
+            # Smaller map, scale down proportionally (minimum 20% of base)
+            scale_factor = max(0.2, self.map_size / typical_map_size)
+            return base_radius * scale_factor
+    
+    def check_spacing_from_existing_units(self, candidate_pos: tuple, 
+                                         existing_positions: list, 
+                                         min_spacing: float) -> bool:
+        """Check if a candidate position has sufficient spacing from existing unit positions.
+        
+        Args:
+            candidate_pos: Candidate position (x, y, z) tuple
+            existing_positions: List of existing positions [(x1, y1, z1), (x2, y2, z2), ...]
+            min_spacing: Minimum required spacing in meters
+        
+        Returns:
+            True if position has sufficient spacing, False otherwise
+        """
+        if not existing_positions:
+            return True
+        
+        from ..misc.math_utils import calculate_2d_distance
+        candidate_2d = (candidate_pos[0], candidate_pos[2])
+        
+        for existing_pos in existing_positions:
+            if len(existing_pos) < 3:
+                continue
+            existing_2d = (existing_pos[0], existing_pos[2])
+            dist = calculate_2d_distance(candidate_2d, existing_2d)
+            if dist < min_spacing:
+                return False
+        return True
     
     def _log(self, message: str):
         """Route messages through centralized logger with simple level detection."""
@@ -98,6 +178,56 @@ class MissionTerrainHelper:
         y = self.get_terrain_height_safe(x, z)
         return (x, y + altitude_agl, z)
 
+    def _validate_position_against_constraints(self, pos_2d, constraint_area=None, excluded_areas=None, position_validator=None):
+        """Helper function to validate a position (x, z) against territory constraints.
+        
+        Args:
+            pos_2d: Position tuple (x, z)
+            constraint_area: Optional constraint area dict (see find_observation_post for format)
+            excluded_areas: Optional list of excluded area dicts
+            position_validator: Optional callable(pos_2d) -> bool
+        
+        Returns:
+            bool: True if position is allowed, False otherwise
+        """
+        from ..misc.math_utils import is_position_in_circle
+        x, z = pos_2d
+        
+        # Check if in constraint area (if specified)
+        if constraint_area:
+            if constraint_area.get('type') == 'circle':
+                center = constraint_area['center']
+                radius = constraint_area['radius']
+                if not is_position_in_circle((x, z), center, radius):
+                    return False
+            elif constraint_area.get('type') == 'polygon':
+                vertices = constraint_area.get('vertices', [])
+                if vertices and not self.tc._point_in_polygon(x, z, vertices):
+                    return False
+        
+        # Check if in excluded areas
+        if excluded_areas:
+            for excluded in excluded_areas:
+                if excluded.get('type') == 'circle':
+                    center = excluded['center']
+                    radius = excluded['radius']
+                    if is_position_in_circle((x, z), center, radius):
+                        return False
+                elif excluded.get('type') == 'polygon':
+                    vertices = excluded.get('vertices', [])
+                    if vertices and self.tc._point_in_polygon(x, z, vertices):
+                        return False
+        
+        # Check custom validator
+        if position_validator:
+            try:
+                if not position_validator((x, z)):
+                    return False
+            except Exception:
+                return False
+        
+        return True
+    
     def has_line_of_sight(self, pos1, pos2, steps=20, terrain_offset=0):
         """
         Checks for clear line of sight between two 3D points, accounting for terrain.
@@ -112,16 +242,26 @@ class MissionTerrainHelper:
             bool: True if there is clear line of sight, False if it is obstructed.
         """
         p1, p2 = np.array(pos1), np.array(pos2)
+        
+        # Check that both endpoints are above terrain
+        terrain_h1 = self.tc.get_terrain_height(p1[0], p1[2])
+        terrain_h2 = self.tc.get_terrain_height(p2[0], p2[2])
+        if p1[1] < (terrain_h1 + terrain_offset) or p2[1] < (terrain_h2 + terrain_offset):
+            return False
+        
+        # Check intermediate points along the line
         for i in range(1, steps + 1):
-            t = i / float(steps)
+            t = i / float(steps + 1)  # Use steps+1 to check points between start and end
             # Linear interpolation: p = (1-t)*p1 + t*p2
             interp_point = p1 + t * (p2 - p1)
             terrain_h = self.tc.get_terrain_height(interp_point[0], interp_point[2])
-            if interp_point[1] < (terrain_h + terrain_offset):
+            if terrain_h is not None and interp_point[1] < (terrain_h + terrain_offset):
                 return False # Obstructed by terrain
         return True
     
-    def find_observation_post(self, target_area, min_dist, max_dist, num_candidates=20):
+    def find_observation_post(self, target_area, min_dist, max_dist, num_candidates=20, 
+                             constraint_area=None, excluded_areas=None, position_validator=None,
+                             existing_unit_positions=None, min_spacing_from_units=None):
         """
         Finds a high-altitude point with LoS to a target, ideal for recon or sniper units.
 
@@ -134,36 +274,104 @@ class MissionTerrainHelper:
            - `x = cx + r * cos(theta)`, `z = cz + r * sin(theta)`
         2. It gets the terrain height at each point and sorts candidates by altitude (highest first).
         3. It checks Line of Sight (LoS) from the highest candidates to the target and returns the first valid one.
+        4. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
 
         Args:
             target_area (tuple): The (x, y, z) coordinate of the target to be observed.
             min_dist (float): The minimum distance from the target.
             max_dist (float): The maximum distance from the target.
             num_candidates (int): The number of random points to test.
+            constraint_area (dict, optional): Constraint area specification:
+                - {'type': 'circle', 'center': (x, z), 'radius': float} for circular constraint
+                - {'type': 'polygon', 'vertices': [(x1, z1), (x2, z2), ...]} for polygonal constraint
+            excluded_areas (list, optional): List of constraint_area dicts to exclude (same format as constraint_area).
+            position_validator (callable, optional): Function(position) -> bool to validate candidate positions.
+            existing_unit_positions (list, optional): List of existing unit positions [(x1, y1, z1), ...] to avoid.
+            min_spacing_from_units (float, optional): Minimum spacing from existing units in meters. If None, uses default based on unit type.
 
         Returns:
             tuple: The (x, y, z) coordinate of a suitable observation post, or None.
         """
-        from ..misc.math_utils import generate_random_position_in_circle
+        from ..misc.math_utils import generate_random_position_in_circle, is_position_in_circle
+        
+        def _is_position_allowed(pos_2d):
+            """Check if position (x, z) is allowed based on constraints."""
+            x, z = pos_2d
+            
+            # Check if in constraint area (if specified)
+            if constraint_area:
+                if constraint_area.get('type') == 'circle':
+                    center = constraint_area['center']
+                    radius = constraint_area['radius']
+                    if not is_position_in_circle((x, z), center, radius):
+                        return False
+                elif constraint_area.get('type') == 'polygon':
+                    # Use point-in-polygon check from terrain calculator
+                    vertices = constraint_area.get('vertices', [])
+                    if vertices and not self.tc._point_in_polygon(x, z, vertices):
+                        return False
+            
+            # Check if in excluded areas
+            if excluded_areas:
+                for excluded in excluded_areas:
+                    if excluded.get('type') == 'circle':
+                        center = excluded['center']
+                        radius = excluded['radius']
+                        if is_position_in_circle((x, z), center, radius):
+                            return False
+                    elif excluded.get('type') == 'polygon':
+                        vertices = excluded.get('vertices', [])
+                        if vertices and self.tc._point_in_polygon(x, z, vertices):
+                            return False
+            
+            # Check custom validator
+            if position_validator:
+                try:
+                    if not position_validator((x, z)):
+                        return False
+                except Exception:
+                    return False
+            
+            return True
+        
         candidates = []
-        for _ in range(num_candidates):
+        attempts = 0
+        max_attempts = num_candidates * 3  # Try more times if constraints are tight
+        
+        while len(candidates) < num_candidates and attempts < max_attempts:
+            attempts += 1
             # Uniform distribution within the annulus
             x, z = generate_random_position_in_circle(
                 (target_area[0], target_area[2]), max_dist, min_dist, uniform_distribution=True
             )
+            
+            # Check if position is allowed by constraints
+            if not _is_position_allowed((x, z)):
+                continue
+            
             y = self.tc.get_terrain_height(x, z)
-            candidates.append((x, y, z))
+            if y is not None:
+                candidate_pos = (x, y, z)
+                # Check spacing from existing units if provided
+                if existing_unit_positions and min_spacing_from_units:
+                    if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                        continue
+                candidates.append(candidate_pos)
         
         # Sort by elevation, highest first
         candidates.sort(key=lambda p: p[1], reverse=True)
 
         for post in candidates:
-            # Check LoS from slightly above the ground at the post to the target
-            if self.has_line_of_sight((post[0], post[1] + 2, post[2]), target_area):
+            # Check LoS from unit height above ground at the post to the target
+            # Use 8m offset for radar/SAM units (typical radar mast height), 2m for infantry
+            unit_height = 8.0  # Default for observation posts (typically radar/SAM)
+            if self.has_line_of_sight((post[0], post[1] + unit_height, post[2]), target_area):
                 return post
         return None
 
-    def find_artillery_position(self, target_area, search_radius, standoff_dist=1000):
+    def find_artillery_position(self, target_area, search_radius, standoff_dist=1000,
+                                constraint_area=None, excluded_areas=None, position_validator=None,
+                                existing_unit_positions=None, min_spacing_from_units=None):
         """
         Finds a position hidden from a target, suitable for indirect fire.
 
@@ -173,24 +381,84 @@ class MissionTerrainHelper:
         1. Similar to the observation post, it samples points around the target.
         2. It prioritizes points that are *behind* terrain features relative to the target.
         3. It returns the first valid point that *fails* the Line of Sight check.
+        4. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
 
         Args:
             target_area (tuple): The (x, y, z) of the target.
-            search_radius (float): The radius around the target to search within.
+            search_radius (float): The radius around the target to search within. Will be scaled by map size.
             standoff_dist (float): Minimum distance to keep from the target.
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
+            existing_unit_positions (list, optional): List of existing unit positions [(x1, y1, z1), ...] to avoid.
+            min_spacing_from_units (float, optional): Minimum spacing from existing units in meters. If None, uses default based on unit type.
 
         Returns:
             tuple: The (x, y, z) coordinate of a hidden artillery position, or None.
         """
         # This function is the inverse of find_observation_post
-        from ..misc.math_utils import generate_random_position_in_circle
+        from ..misc.math_utils import generate_random_position_in_circle, is_position_in_circle
+        
+        def _is_position_allowed(pos_2d):
+            """Check if position (x, z) is allowed based on constraints."""
+            x, z = pos_2d
+            
+            if constraint_area:
+                if constraint_area.get('type') == 'circle':
+                    center = constraint_area['center']
+                    radius = constraint_area['radius']
+                    if not is_position_in_circle((x, z), center, radius):
+                        return False
+                elif constraint_area.get('type') == 'polygon':
+                    vertices = constraint_area.get('vertices', [])
+                    if vertices and not self.tc._point_in_polygon(x, z, vertices):
+                        return False
+            
+            if excluded_areas:
+                for excluded in excluded_areas:
+                    if excluded.get('type') == 'circle':
+                        center = excluded['center']
+                        radius = excluded['radius']
+                        if is_position_in_circle((x, z), center, radius):
+                            return False
+                    elif excluded.get('type') == 'polygon':
+                        vertices = excluded.get('vertices', [])
+                        if vertices and self.tc._point_in_polygon(x, z, vertices):
+                            return False
+            
+            if position_validator:
+                try:
+                    if not position_validator((x, z)):
+                        return False
+                except Exception:
+                    return False
+            
+            return True
+        
+        # Scale search radius based on map size
+        scaled_search_radius = self.scale_search_radius_by_map_size(search_radius)
+        
         candidates = []
-        for _ in range(30): # More candidates to find a hidden spot
+        attempts = 0
+        max_attempts = 90  # More attempts for hidden positions
+        
+        while len(candidates) < 30 and attempts < max_attempts:
+            attempts += 1
             x, z = generate_random_position_in_circle(
-                (target_area[0], target_area[2]), search_radius, standoff_dist, uniform_distribution=True
+                (target_area[0], target_area[2]), scaled_search_radius, standoff_dist, uniform_distribution=True
             )
+            
+            if not _is_position_allowed((x, z)):
+                continue
+            
             y = self.tc.get_terrain_height(x, z)
-            candidates.append((x, y, z))
+            if y is not None:
+                candidate_pos = (x, y, z)
+                # Check spacing from existing units if provided
+                if existing_unit_positions and min_spacing_from_units:
+                    if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                        continue
+                candidates.append(candidate_pos)
             
         # Sort by elevation, lowest first, to prioritize valleys
         candidates.sort(key=lambda p: p[1])
@@ -396,9 +664,23 @@ class MissionTerrainHelper:
 
     #region Terrain & Topography
 
-    def find_flat_landing_zones(self, center_x, center_z, search_radius, min_area_radius, max_slope_degrees=5.0):
+    def find_flat_landing_zones(self, center_x, center_z, search_radius, min_area_radius, max_slope_degrees=5.0,
+                                 constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Scans an area for flat ground suitable for landing helicopters or placing bases.
+        
+        Args:
+            center_x: X coordinate of search center
+            center_z: Z coordinate of search center
+            search_radius: Search radius in meters
+            min_area_radius: Minimum radius of flat area required
+            max_slope_degrees: Maximum slope angle in degrees
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
+        
+        Returns:
+            list: List of (x, y, z) tuples for valid landing zones
         """
         lz_points = []
         min_normal_y = np.cos(np.radians(max_slope_degrees))
@@ -406,8 +688,14 @@ class MissionTerrainHelper:
         sample_points_z = np.linspace(center_z - search_radius, center_z + search_radius, 25)
         for x in sample_points_x:
             for z in sample_points_z:
-                if self.tc.get_terrain_normal(x, z)[1] < min_normal_y: 
+                # Check territory constraints first
+                if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
                     continue
+                # Check center point flatness first
+                center_normal = self.tc.get_terrain_normal(x, z)
+                if center_normal[1] < min_normal_y: 
+                    continue
+                # Check area around center point
                 is_area_flat = True
                 for angle in np.linspace(0, 2 * np.pi, 8, endpoint=False):
                     check_x, check_z = x + min_area_radius * np.cos(angle), z + min_area_radius * np.sin(angle)
@@ -418,47 +706,124 @@ class MissionTerrainHelper:
                     lz_points.append((x, self.tc.get_terrain_height(x, z), z))
         return lz_points
 
-    def find_highest_point_in_area(self, center_x, center_z, search_radius):
-        """Finds the highest terrain point in a given area."""
+    def find_highest_point_in_area(self, center_x, center_z, search_radius,
+                                   existing_unit_positions=None, min_spacing_from_units=None):
+        """Finds the highest terrain point in a given area.
+        
+        Args:
+            center_x: Center X coordinate
+            center_z: Center Z coordinate
+            search_radius: Search radius (will be scaled by map size)
+            existing_unit_positions (list, optional): List of existing positions to avoid
+            min_spacing_from_units (float, optional): Minimum spacing from existing units
+        
+        Returns:
+            (x, y, z) tuple of highest point, or None
+        """
+        # Scale search radius by map size
+        scaled_radius = self.scale_search_radius_by_map_size(search_radius)
         
         highest_y = -float('inf')
         highest_pos = None
-        sample_points_x = np.linspace(center_x - search_radius, center_x + search_radius, 50)
-        sample_points_z = np.linspace(center_z - search_radius, center_z + search_radius, 50)
+        sample_points_x = np.linspace(center_x - scaled_radius, center_x + scaled_radius, 50)
+        sample_points_z = np.linspace(center_z - scaled_radius, center_z + scaled_radius, 50)
         for x in sample_points_x:
             for z in sample_points_z:
                 y = self.tc.get_terrain_height(x, z)
+                if y is None:
+                    continue
+                candidate_pos = (x, y, z)
+                # Check spacing from existing units if provided
+                if existing_unit_positions and min_spacing_from_units:
+                    if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                        continue
                 if y > highest_y: 
-                    highest_y, highest_pos = y, (x, y, z)
+                    highest_y, highest_pos = y, candidate_pos
         return highest_pos
 
 
-    def find_lowest_point_in_area(self, center_x, center_z, search_radius):
-        """Finds the lowest terrain point in a given area."""
+    def find_lowest_point_in_area(self, center_x, center_z, search_radius,
+                                  existing_unit_positions=None, min_spacing_from_units=None):
+        """Finds the lowest terrain point in a given area.
+        
+        Args:
+            center_x: Center X coordinate
+            center_z: Center Z coordinate
+            search_radius: Search radius (will be scaled by map size)
+            existing_unit_positions (list, optional): List of existing positions to avoid
+            min_spacing_from_units (float, optional): Minimum spacing from existing units
+        
+        Returns:
+            (x, y, z) tuple of lowest point, or None
+        """
+        # Scale search radius by map size
+        scaled_radius = self.scale_search_radius_by_map_size(search_radius)
         
         lowest_y = float('inf') 
         lowest_pos = None
-        sample_points_x = np.linspace(center_x - search_radius, center_x + search_radius, 50)
-        sample_points_z = np.linspace(center_z - search_radius, center_z + search_radius, 50)
+        sample_points_x = np.linspace(center_x - scaled_radius, center_x + scaled_radius, 50)
+        sample_points_z = np.linspace(center_z - scaled_radius, center_z + scaled_radius, 50)
         for x in sample_points_x:
             for z in sample_points_z:
                 y = self.tc.get_terrain_height(x, z)
+                if y is None:
+                    continue
+                candidate_pos = (x, y, z)
+                # Check spacing from existing units if provided
+                if existing_unit_positions and min_spacing_from_units:
+                    if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                        continue
                 if y < lowest_y: 
-                    lowest_y, lowest_pos = y, (x, y, z)
+                    lowest_y, lowest_pos = y, candidate_pos
         return lowest_pos
 
 
-    def find_hidden_position(self, observer_pos, target_area_center, search_radius):
+    def find_hidden_position(self, observer_pos, target_area_center, search_radius,
+                             constraint_area=None, excluded_areas=None, position_validator=None,
+                             existing_unit_positions=None, min_spacing_from_units=None):
         """
         Finds a low-lying point in an area that is hidden from an observer's view.
+        
+        Args:
+            observer_pos (tuple): The (x, y, z) position of the observer.
+            target_area_center (tuple): The (x, z) or (x, y, z) center of the area to search.
+            search_radius (float): The radius to search within (will be scaled by map size).
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
+            existing_unit_positions (list, optional): List of existing positions to avoid.
+            min_spacing_from_units (float, optional): Minimum spacing from existing units.
+        
+        Returns:
+            tuple: An (x, y, z) hidden position, or None if none found.
         """
+        # Scale search radius by map size
+        scaled_search_radius = self.scale_search_radius_by_map_size(search_radius)
+        
         potential_points = []
         # Find all low points first
         from ..misc.math_utils import generate_random_position_in_circle
-        for _ in range(50): # Sample 50 random points
-            x, z = generate_random_position_in_circle(target_area_center, search_radius)
+        # Extract x, z from target_area_center (handle both 2D and 3D)
+        center_2d = (target_area_center[0], target_area_center[2] if len(target_area_center) >= 3 else target_area_center[1])
+        attempts = 0
+        max_attempts = 150  # More attempts if constraints are tight
+        
+        while len(potential_points) < 50 and attempts < max_attempts:
+            attempts += 1
+            x, z = generate_random_position_in_circle(center_2d, scaled_search_radius)
+            
+            # Check territory constraints
+            if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
+                continue
+            
             y = self.tc.get_terrain_height(x, z)
-            potential_points.append((x, y, z))
+            if y is not None:
+                candidate_pos = (x, y, z)
+                # Check spacing from existing units if provided
+                if existing_unit_positions and min_spacing_from_units:
+                    if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                        continue
+                potential_points.append(candidate_pos)
         
         # Sort by height, lowest first
         potential_points.sort(key=lambda p: p[1])
@@ -474,11 +839,25 @@ class MissionTerrainHelper:
     def get_terrain_following_path(self, start_pos, end_pos, steps, altitude_agl=150.0):
         """
         Generates a series of waypoints at a constant altitude above ground level.
+        
+        Args:
+            start_pos: 2D tuple (x, z) or 3D tuple (x, y, z) - if 3D, y is ignored
+            end_pos: 2D tuple (x, z) or 3D tuple (x, y, z) - if 3D, y is ignored
+            steps: Number of waypoints to generate
+            altitude_agl: Altitude above ground level in meters
+            
+        Returns:
+            List of (x, y, z) waypoints
         """
-        # ... (implementation unchanged)
+        # Extract x, z coordinates (handle both 2D and 3D input)
+        start_x = start_pos[0]
+        start_z = start_pos[2] if len(start_pos) >= 3 else start_pos[1]
+        end_x = end_pos[0]
+        end_z = end_pos[2] if len(end_pos) >= 3 else end_pos[1]
+        
         waypoints = []
-        x_points = np.linspace(start_pos[0], end_pos[0], steps)
-        z_points = np.linspace(start_pos[1], end_pos[1], steps)
+        x_points = np.linspace(start_x, end_x, steps)
+        z_points = np.linspace(start_z, end_z, steps)
         for x, z in zip(x_points, z_points):
             terrain_height = self.tc.get_terrain_height(x, z)
             waypoints.append((x, terrain_height + altitude_agl, z))
@@ -515,19 +894,23 @@ class MissionTerrainHelper:
            - Mid avg `ny`, mid std dev -> 'Rolling Hills'
 
         Args:
-            position (tuple): The (x, z) coordinate to classify.
+            position (tuple): The (x, z) coordinate (2D) or (x, y, z) coordinate (3D - y ignored).
             sample_radius (float): The radius to sample for slope analysis.
 
         Returns:
             str: The name of the terrain type (e.g., "Urban", "Mountainous").
         """
-        if self.tc.get_city_density(position[0], position[1]) > 0.1:
+        # Extract x, z coordinates (handle both 2D and 3D input)
+        pos_x = position[0]
+        pos_z = position[2] if len(position) >= 3 else position[1]
+        
+        if self.tc.get_city_density(pos_x, pos_z) > 0.1:
             return "Urban"
             
         normals_y = []
         from ..misc.math_utils import generate_random_position_in_circle
         for _ in range(20): # Increased samples for better accuracy
-            x, z = generate_random_position_in_circle(position, sample_radius)
+            x, z = generate_random_position_in_circle((pos_x, pos_z), sample_radius)
             normals_y.append(self.tc.get_terrain_normal(x, z)[1])
         
         avg_ny = np.mean(normals_y)
@@ -673,7 +1056,8 @@ class MissionTerrainHelper:
         path.append(end_pos)
         return path
     
-    def get_convoy_dispersal_points(self, road_position, num_points, radius):
+    def get_convoy_dispersal_points(self, road_position, num_points, radius,
+                                     constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Finds nearby off-road, hidden positions for a convoy to scatter to when ambushed.
 
@@ -684,11 +1068,15 @@ class MissionTerrainHelper:
         2. The "observer" is a point high above the `road_position`, simulating an attacker's viewpoint.
         3. It searches in a radius around the road for points that are *not* visible from that high vantage point.
         4. It ensures the points found are not on a road themselves.
+        5. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
 
         Args:
             road_position (tuple): The (x, y, z) point on the road where the convoy is.
             num_points (int): The number of dispersal points to find.
             radius (float): The maximum distance from the road to search for cover.
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
 
         Returns:
             list: A list of (x, y, z) tuples for suitable off-road cover positions.
@@ -697,12 +1085,19 @@ class MissionTerrainHelper:
         # Observer is high above the road, representing the attacker's general view
         observer_pos = (road_position[0], road_position[1] + 200, road_position[2])
         
-        for _ in range(num_points * 5): # Try more times than needed to get good results
-            if len(dispersal_points) >= num_points:
-                break
+        attempts = 0
+        max_attempts = num_points * 10  # More attempts if constraints are tight
+        
+        while len(dispersal_points) < num_points and attempts < max_attempts:
+            attempts += 1
             
             # Use the core logic of find_hidden_position to find a suitable spot
-            hidden_pos = self.find_hidden_position(observer_pos, (road_position[0], road_position[2]), radius)
+            hidden_pos = self.find_hidden_position(
+                observer_pos, (road_position[0], road_position[2]), radius,
+                constraint_area=constraint_area,
+                excluded_areas=excluded_areas,
+                position_validator=position_validator
+            )
 
             if hidden_pos and not self.tc.is_on_road(hidden_pos[0], hidden_pos[2]):
                 # Check if it's too close to an existing point
@@ -729,21 +1124,30 @@ class MissionTerrainHelper:
         4. It picks the point with the lowest score, which favors low altitude while still progressing towards the goal.
 
         Args:
-            start_pos (tuple): The (x, z) start coordinate.
-            end_pos (tuple): The (x, z) end coordinate.
+            start_pos (tuple): The (x, z) start coordinate (2D) or (x, y, z) (3D - y ignored).
+            end_pos (tuple): The (x, z) end coordinate (2D) or (x, y, z) (3D - y ignored).
             steps (int): The number of waypoints to generate.
 
         Returns:
             list: A list of (x, y, z) waypoints following the valley floor.
         """
-        path = [(start_pos[0], self.tc.get_terrain_height(start_pos[0], start_pos[1]), start_pos[1])]
-        current_pos = np.array(start_pos, dtype=float)
+        # Extract x, z coordinates (handle both 2D and 3D input)
+        start_x = start_pos[0]
+        start_z = start_pos[2] if len(start_pos) >= 3 else start_pos[1]
+        end_x = end_pos[0]
+        end_z = end_pos[2] if len(end_pos) >= 3 else end_pos[1]
+        
+        start_y = self.tc.get_terrain_height(start_x, start_z)
+        path = [(start_x, start_y, start_z)]
+        current_pos = np.array([start_x, start_z], dtype=float)
+        
+        end_pos_2d = np.array([end_x, end_z], dtype=float)
         
         for _ in range(steps):
-            if np.linalg.norm(current_pos - np.array(end_pos)) < 500: 
+            if np.linalg.norm(current_pos - end_pos_2d) < 500: 
                 break
 
-            direction_to_end = (np.array(end_pos, dtype=float) - current_pos)
+            direction_to_end = end_pos_2d - current_pos
             norm = np.linalg.norm(direction_to_end)
             if norm < 1e-6: 
                 break
@@ -760,7 +1164,7 @@ class MissionTerrainHelper:
                 cand_pos = current_pos + cand_dir * 150 # 150m segments
 
                 height = self.tc.get_terrain_height(cand_pos[0], cand_pos[1])
-                dist_to_target = np.linalg.norm(cand_pos - np.array(end_pos))
+                dist_to_target = np.linalg.norm(cand_pos - end_pos_2d)
 
                 # Score favors low altitude but penalizes moving away from the target
                 score = height * 2 + dist_to_target
@@ -774,7 +1178,8 @@ class MissionTerrainHelper:
             else:
                 break
         
-        path.append((end_pos[0], self.tc.get_terrain_height(end_pos[0], end_pos[1]), end_pos[1]))
+        end_y = self.tc.get_terrain_height(end_x, end_z)
+        path.append((end_x, end_y, end_z))
         return path
 
     def _find_all_bridges(self):
@@ -953,8 +1358,9 @@ class MissionTerrainHelper:
         total_points = 0
         visible_points = 0
         
-        # Sample every 1km along the corridor length
-        for dist_along in np.linspace(0, centerline_len, int(centerline_len / 1000)):
+        # Sample every 1km along the corridor length (ensure at least 2 points for short corridors)
+        num_samples = max(2, int(centerline_len / 1000))
+        for dist_along in np.linspace(0, centerline_len, num_samples):
             # Sample across the width
             for dist_across in np.linspace(-width/2, width/2, 5):
                 sample_pos_2d = p1 + centerline_dir * dist_along + perp_dir * dist_across
@@ -1186,7 +1592,10 @@ class MissionTerrainHelper:
         points = []
         center = np.array(center_pos)
         
-        perp_angle_rad = np.radians(90 - (angle_deg + 90)) # Perpendicular to facing direction
+        # Convert heading to math angle: math_angle = 90° - heading (so 0° heading → 90° math)
+        # For perpendicular: add 90° to math angle = (90° - heading) + 90° = 180° - heading
+        # Or subtract 90°: (90° - heading) - 90° = -heading
+        perp_angle_rad = np.radians(180 - angle_deg)  # Perpendicular to facing direction
         perp_vec = np.array([np.cos(perp_angle_rad), 0, np.sin(perp_angle_rad)])
 
         for i in range(num_units):
@@ -1271,29 +1680,59 @@ class MissionTerrainHelper:
         garrison_points.append((pos[0], pos[1] + 20, pos[2]))
         return garrison_points[:max_units]
         
-    def find_open_area(self, center_pos, search_radius, min_clear_radius):
+    def find_open_area(self, center_pos, search_radius, min_clear_radius,
+                       constraint_area=None, excluded_areas=None, position_validator=None,
+                       existing_unit_positions=None, min_spacing_from_units=None):
         """
         Finds a large, clear area with no buildings or dense forests.
 
         Why it's useful: For finding a place to set up a FARP, a large-scale battle, or a safe extraction zone.
 
         How it works (Logic):
-        1. It samples random points in the `search_radius`.
+        1. It samples random points in the `search_radius` (scaled by map size).
         2. For each point, it checks a smaller `min_clear_radius` around it.
         3. Inside this smaller circle, it verifies there are no cities (`get_city_density`) and no static prefabs (`get_buildings_in_area`).
         4. The first point that passes the check is returned.
+        5. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
+        6. If existing_unit_positions and min_spacing_from_units are provided, ensures spacing from existing units.
 
         Args:
             center_pos (tuple): The (x, z) center of the area to search.
-            search_radius (float): The large radius to search within.
+            search_radius (float): The large radius to search within (will be scaled by map size).
             min_clear_radius (float): The required radius of the clear, open space.
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
+            existing_unit_positions (list, optional): List of existing unit positions [(x1, y1, z1), ...] to avoid.
+            min_spacing_from_units (float, optional): Minimum spacing from existing units in meters.
 
         Returns:
             tuple: An (x, y, z) position in the center of the open area, or None.
         """
         from ..misc.math_utils import generate_random_position_in_circle
-        for _ in range(50): # 50 attempts to find a suitable spot
-            check_x, check_z = generate_random_position_in_circle(center_pos, search_radius)
+        # Scale search radius based on map size
+        scaled_search_radius = self.scale_search_radius_by_map_size(search_radius)
+        
+        attempts = 0
+        max_attempts = 150  # More attempts if constraints are tight
+        
+        while attempts < max_attempts:
+            attempts += 1
+            check_x, check_z = generate_random_position_in_circle(center_pos, scaled_search_radius)
+            
+            # Check territory constraints first
+            if not self._validate_position_against_constraints((check_x, check_z), constraint_area, excluded_areas, position_validator):
+                continue
+            
+            # Check spacing from existing units if provided
+            height = self.tc.get_terrain_height(check_x, check_z)
+            if height is None:
+                continue
+            
+            candidate_pos = (check_x, height, check_z)
+            if existing_unit_positions and min_spacing_from_units:
+                if not self.check_spacing_from_existing_units(candidate_pos, existing_unit_positions, min_spacing_from_units):
+                    continue
             
             # Check 1: City density
             if self.tc.get_city_density(check_x, check_z) > 0.05:
@@ -1304,12 +1743,12 @@ class MissionTerrainHelper:
                 continue
 
             # If all checks pass, we found a spot
-            height = self.tc.get_terrain_height(check_x, check_z)
-            return (check_x, height, check_z)
+            return candidate_pos
             
         return None
 
-    def get_random_points_in_area(self, center_pos, radius, num_points):
+    def get_random_points_in_area(self, center_pos, radius, num_points,
+                                   constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Scatters random points within an area, correctly snapped to the ground.
 
@@ -1320,21 +1759,37 @@ class MissionTerrainHelper:
            - `r = sqrt(rand()) * radius`
            - `theta = rand() * 2 * pi`
         2. Each generated (x, z) point is then snapped to the ground using `get_smart_placement`.
+        3. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
 
         Args:
             center_pos (tuple): The (x, z) center of the circle.
             radius (float): The radius of the circle.
             num_points (int): The number of points to generate.
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
 
         Returns:
             list: A list of (x, y, z) positions.
         """
         points = []
-        for _ in range(num_points):
+        attempts = 0
+        max_attempts = num_points * 3  # More attempts if constraints are tight
+        
+        while len(points) < num_points and attempts < max_attempts:
+            attempts += 1
             r = radius * np.sqrt(random.random())
             theta = random.random() * 2 * np.pi
             x = center_pos[0] + r * np.cos(theta)
-            z = center_pos[1] + r * np.sin(theta)
+            # Handle both 2D (x, z) and 3D (x, y, z) center_pos
+            if len(center_pos) >= 2:
+                z = center_pos[1] + r * np.sin(theta)
+            else:
+                z = center_pos[0] + r * np.sin(theta)  # Fallback (shouldn't happen)
+            
+            # Check territory constraints
+            if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
+                continue
             
             placement = self.tc.get_smart_placement(x, z, 0)
             points.append(placement['position'])
@@ -1567,7 +2022,10 @@ class MissionTerrainHelper:
         Returns:
             tuple: An (x, y, z) position for the landing, or None.
         """
-        candidates = self.find_flat_landing_zones(search_area_center[0], search_area_center[1], search_radius, min_area_radius, max_slope_degrees=3.0)
+        # Extract x, z coordinates (handle both 2D and 3D input)
+        center_x = search_area_center[0]
+        center_z = search_area_center[2] if len(search_area_center) >= 3 else search_area_center[1]
+        candidates = self.find_flat_landing_zones(center_x, center_z, search_radius, min_area_radius, max_slope_degrees=3.0)
         
         for pos in candidates:
             # Check if height is close to sea level
@@ -1575,7 +2033,8 @@ class MissionTerrainHelper:
                 return pos
         return None
 
-    def get_area_control_points(self, area_center, radius, num_points):
+    def get_area_control_points(self, area_center, radius, num_points,
+                                 constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Generates tactically interesting capture points for a "King of the Hill" scenario.
 
@@ -1588,18 +2047,27 @@ class MissionTerrainHelper:
            - The center of the nearest road intersection.
            - The top of the nearest small hill.
         3. This ensures points are on meaningful locations, not just random fields.
+        4. If constraint_area or excluded_areas are provided, candidates are filtered accordingly.
 
         Args:
             area_center (tuple): (x, z) center of the mission area.
             radius (float): Radius of the mission area.
             num_points (int): The number of control points to generate.
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
 
         Returns:
             list: A list of (x, y, z) positions for the control points.
         """
         control_points = []
         # Generate more candidates than needed
-        candidates = self.get_random_points_in_area(area_center, radius, num_points * 3)
+        candidates = self.get_random_points_in_area(
+            area_center, radius, num_points * 3,
+            constraint_area=constraint_area,
+            excluded_areas=excluded_areas,
+            position_validator=position_validator
+        )
 
         for cand in candidates:
             # For simplicity, we'll just use the snapped random point for now.
@@ -1739,7 +2207,8 @@ class MissionTerrainHelper:
         
         return errors
 
-    def find_scenic_overlook(self, point_of_interest, min_dist=1000, max_dist=4000):
+    def find_scenic_overlook(self, point_of_interest, min_dist=1000, max_dist=4000,
+                             constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Finds a spot with a dramatic, cinematic view of a target.
 
@@ -1763,12 +2232,22 @@ class MissionTerrainHelper:
 
         candidates = []
         from ..misc.math_utils import generate_random_position_in_circle
-        for _ in range(50):
+        attempts = 0
+        max_attempts = 150  # More attempts if constraints are tight
+        
+        while len(candidates) < 50 and attempts < max_attempts:
+            attempts += 1
             x, z = generate_random_position_in_circle(
                 (point_of_interest[0], point_of_interest[2]), max_dist, min_dist, uniform_distribution=True
             )
+            
+            # Check territory constraints
+            if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
+                continue
+            
             y = self.tc.get_terrain_height(x, z)
-            candidates.append((x, y, z))
+            if y is not None:
+                candidates.append((x, y, z))
 
         for pos in candidates:
             if self.has_line_of_sight(pos, point_of_interest):
@@ -2050,7 +2529,8 @@ if __name__ == "__main__":
     # --- Military Tactical Functions ---
     # Consolidated military functionality for intelligent mission generation
 
-    def find_defensive_position(self, center_pos, search_radius, system_type='generic', threat_direction=None):
+    def find_defensive_position(self, center_pos, search_radius, system_type='generic', threat_direction=None,
+                                constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Find tactically sound defensive position using military doctrine.
         
@@ -2059,6 +2539,9 @@ if __name__ == "__main__":
             search_radius: Search radius in meters
             system_type: Type of system ('radar', 'sam', 'aaa', 'c2', 'logistics', 'generic')
             threat_direction: Expected threat axis in degrees (0-360, None for omnidirectional)
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
             
         Returns:
             Dict with position, score, and tactical analysis
@@ -2070,13 +2553,22 @@ if __name__ == "__main__":
         # Generate candidate positions
         candidates = []
         from ..misc.math_utils import generate_random_position_in_circle
-        for _ in range(50):  # More candidates for better selection
+        attempts = 0
+        max_attempts = 150  # More attempts if constraints are tight
+        
+        while len(candidates) < 50 and attempts < max_attempts:
+            attempts += 1
             x, z = generate_random_position_in_circle(
                 (x_center, z_center), search_radius, search_radius * 0.3
             )
-            y = self.tc.get_elevation_at_point(x, z)
             
-            if y is not None:
+            # Check territory constraints
+            if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
+                continue
+            
+            y = self.tc.get_terrain_height(x, z)
+            
+            if y is not None and y >= 0:
                 candidates.append((x, y, z))
         
         # Score each candidate position
@@ -2149,12 +2641,14 @@ if __name__ == "__main__":
         
         # 5. Slope considerations (not too steep for construction)
         try:
-            slope = abs(self.tc.get_slope_at_point(x, z))
-            if slope < 5.0:
+            from ..misc.math_utils import calculate_slope_from_normal
+            normal = self.tc.get_terrain_normal(x, z)
+            slope_deg = calculate_slope_from_normal(normal, degrees=True)
+            if slope_deg < 5.0:
                 score += 1.0
-            elif slope < 15.0:
+            elif slope_deg < 15.0:
                 score += 0.5
-            elif slope > 30.0:
+            elif slope_deg > 30.0:
                 score -= 1.0
         except Exception:
             pass
@@ -2173,8 +2667,10 @@ if __name__ == "__main__":
         }
         
         try:
-            slope = abs(self.tc.get_slope_at_point(x, z))
-            analysis['slope'] = slope
+            from ..misc.math_utils import calculate_slope_from_normal
+            normal = self.tc.get_terrain_normal(x, z)
+            slope_deg = calculate_slope_from_normal(normal, degrees=True)
+            analysis['slope'] = slope_deg
             
             # Concealment assessment
             terrain_type = analysis['terrain_type']
@@ -2335,7 +2831,8 @@ if __name__ == "__main__":
         
         return assessment
     
-    def find_tactical_positions(self, center_pos, search_radius, position_type, count=1, min_separation=1000):
+    def find_tactical_positions(self, center_pos, search_radius, position_type, count=1, min_separation=1000,
+                                constraint_area=None, excluded_areas=None, position_validator=None):
         """
         Find multiple tactical positions of specified type.
         
@@ -2345,13 +2842,16 @@ if __name__ == "__main__":
             position_type: Type ('overwatch', 'support', 'ambush', 'rally_point')
             count: Number of positions to find
             min_separation: Minimum distance between positions
+            constraint_area (dict, optional): Constraint area specification (see find_observation_post).
+            excluded_areas (list, optional): List of excluded areas (see find_observation_post).
+            position_validator (callable, optional): Function(position) -> bool to validate positions.
             
         Returns:
             List of position dictionaries
         """
         positions = []
         attempts = 0
-        max_attempts = count * 20
+        max_attempts = count * 30  # More attempts if constraints are tight
         
         while len(positions) < count and attempts < max_attempts:
             attempts += 1
@@ -2362,7 +2862,12 @@ if __name__ == "__main__":
             x, z = generate_random_position_in_circle(
                 (x_center, z_center), search_radius, search_radius * 0.3
             )
-            y = self.tc.get_elevation_at_point(x, z)
+            
+            # Check territory constraints
+            if not self._validate_position_against_constraints((x, z), constraint_area, excluded_areas, position_validator):
+                continue
+            
+            y = self.tc.get_terrain_height(x, z)
             
             if y is None:
                 continue
@@ -2404,7 +2909,9 @@ if __name__ == "__main__":
         
         try:
             terrain_type = self.get_terrain_type(position)
-            slope = abs(self.tc.get_slope_at_point(x, z))
+            from ..misc.math_utils import calculate_slope_from_normal
+            normal = self.tc.get_terrain_normal(x, z)
+            slope = calculate_slope_from_normal(normal, degrees=True)
             elevation_diff = y - ref_y
             
             if position_type == 'overwatch':
@@ -2492,9 +2999,9 @@ if __name__ == "__main__":
                 sample_x = x1 + t * (x2 - x1)
                 sample_z = z1 + t * (z2 - z1)
                 sample_y_path = y1 + t * (y2 - y1)  # Linear interpolation of path
-                sample_y_terrain = self.tc.get_elevation_at_point(sample_x, sample_z)
+                sample_y_terrain = self.tc.get_terrain_height(sample_x, sample_z)
                 
-                if sample_y_terrain and sample_y_terrain > sample_y_path + 10:  # 10m clearance
+                if sample_y_terrain is not None and sample_y_terrain > sample_y_path + 10:  # 10m clearance
                     result['blocked_by_terrain'] = True
                     return result
         

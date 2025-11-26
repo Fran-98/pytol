@@ -146,7 +146,7 @@ class ConditionalAction:
     """Represents an action triggered when a Conditional is met."""
     id: int                   # Unique integer ID for this action block
     name: str                 # Name for the action block
-    conditional_id: str       # String ID of the Conditional that triggers this
+    conditional_id: Union[str, int]  # Integer ID of the Conditional that triggers this (was string, now int)
     actions: List[EventTarget] = field(default_factory=list) # Actions to execute
 
 @dataclass

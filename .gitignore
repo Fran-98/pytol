@@ -10,6 +10,7 @@ test_campaings
 test_ideas
 test_missions
 plans_and_tracking
+testing_scripts
 *test_missions*
 *tmp*
 tools
@@ -19,7 +20,10 @@ BACKLOG.md
 
 # Example build outputs
 examples/build/
-
+# Ignore demo artifacts produced by local generation scripts
+examples/output/
+examples/generate_demo.py
+docs/waiting_for_aproval_docs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

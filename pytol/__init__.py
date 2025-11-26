@@ -37,8 +37,13 @@ from .classes.conditionals import ConditionalTree
 from .terrain.terrain_calculator import TerrainCalculator
 from .terrain.mission_terrain_helper import MissionTerrainHelper
 
-# --- Procedural Engine (scaffold) ---
-from .procedural import ProceduralMissionSpec, ProceduralMissionEngine
+# --- Procedural Engine ---
+try:
+    from .procedural import ProceduralMissionSpec, ProceduralMissionEngine
+except ImportError:
+    # Legacy procedural engine not available (new pipeline in use)
+    ProceduralMissionSpec = None
+    ProceduralMissionEngine = None
 
 # --- Equipment System ---
 from .resources.equipment import (

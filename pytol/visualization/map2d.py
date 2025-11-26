@@ -82,13 +82,21 @@ class Map2DVisualizer:
             'waypoints': '#FF6600',        # Orange for waypoints
             'objectives': '#9900CC',       # Purple for objectives
             'airbases': '#FFD700',         # Gold for airbases
+            'friendly_territory': '#0044AA',    # Blue for friendly territory
+            'enemy_territory': '#AA0000',       # Red for enemy territory
+            'neutral_territory': '#808080',     # Gray for neutral territory
         }
     
     def _create_terrain_layer(self, ax, style: str = 'contour', alpha: float = 0.7):
-        """Create terrain elevation layer."""
+        """Create terrain elevation layer.
+        
+        Water (below 0m) is rendered in blue.
+        Sand/beach (0-10m) is rendered in sand color.
+        Terrain (above 10m) uses terrain colormap (green->brown->white).
+        """
         self.logger.info("Generating terrain layer...")
         
-        # Get heightmap data
+        # Get heightmap data (already normalized to [0, 1] range)
         heightmap = self.tc.heightmap_data_r
         map_size = self.tc.total_map_size_meters
         
@@ -98,25 +106,101 @@ class Map2DVisualizer:
         X, Z = np.meshgrid(x, z)
         
         # Convert heightmap to world heights
+        # Note: heightmap_data_r is already normalized [0, 1], not [0, 255]
         min_alt, max_alt = self.tc.min_height, self.tc.max_height
-        heights = min_alt + (heightmap / 255.0) * (max_alt - min_alt)
+        heights = min_alt + heightmap * (max_alt - min_alt)
+        
+        # Define elevation zones
+        water_mask = heights < 0  # Below sea level
+        sand_mask = (heights >= 0) & (heights <= 10)  # 0-10m above sea level (sand/beach)
+        terrain_mask = heights > 10  # Above 10m (terrain)
         
         if style == 'contour':
-            # Contour lines with elevation coloring
-            contour_levels = np.linspace(min_alt, max_alt, 20)
-            cs = ax.contourf(X, Z, heights, levels=contour_levels, 
-                           cmap='terrain', alpha=alpha, extend='both')
+            # Create a custom visualization that handles water, sand, and terrain separately
             
-            # Add contour lines
-            ax.contour(X, Z, heights, levels=contour_levels[::2], 
-                      colors='black', alpha=0.3, linewidths=0.5)
+            # First, render water areas (below 0) in blue
+            if np.any(water_mask):
+                water_levels = np.linspace(min_alt, 0, 5)  # Fewer levels for water
+                cs_water = ax.contourf(X, Z, np.where(water_mask, heights, np.nan), 
+                                     levels=water_levels, colors='#1E4E79', alpha=alpha, 
+                                     extend='min', zorder=1)
             
-            return cs
+            # Render sand/beach areas (0-10m) in sand color
+            sand_threshold = 10.0
+            if np.any(sand_mask):
+                sand_levels = np.linspace(0, sand_threshold, 3)
+                cs_sand = ax.contourf(X, Z, np.where(sand_mask, heights, np.nan), 
+                                     levels=sand_levels, colors='#D2B48C', alpha=alpha, 
+                                     extend='neither', zorder=1)
+            
+            # Render terrain areas (above 10m) with terrain colormap
+            terrain_min = max(10.0, np.nanmin(heights[terrain_mask]) if np.any(terrain_mask) else 10.0)
+            terrain_max = max_alt
+            if terrain_max > terrain_min:
+                terrain_levels = np.linspace(terrain_min, terrain_max, 20)
+                cs_terrain = ax.contourf(X, Z, np.where(terrain_mask, heights, np.nan), 
+                                       levels=terrain_levels, cmap='terrain', alpha=alpha, 
+                                       extend='max', zorder=1)
+                
+                # Add contour lines for terrain
+                ax.contour(X, Z, np.where(terrain_mask, heights, np.nan), 
+                          levels=terrain_levels[::3], colors='black', alpha=0.4, 
+                          linewidths=0.8, zorder=2)
+            
+            # Return the terrain contour set for colorbar (if it exists)
+            if 'cs_terrain' in locals():
+                return cs_terrain
+            elif np.any(terrain_mask):
+                # Fallback: create a simple terrain visualization
+                terrain_levels = np.linspace(terrain_min, terrain_max, 20)
+                return ax.contourf(X, Z, heights, levels=terrain_levels, cmap='terrain', alpha=alpha, zorder=1)
+            return None
         
         elif style == 'heatmap':
-            # Simple heatmap
-            im = ax.imshow(heights, extent=[0, map_size, 0, map_size], 
-                          cmap='terrain', alpha=alpha, origin='lower')
+            # For heatmap style, use a custom colormap approach
+            # Create RGB image manually
+            from matplotlib.colors import LinearSegmentedColormap
+            
+            # Create custom colormap: blue (water) -> sand -> terrain
+            colors_list = [
+                '#1E4E79',  # Deep blue (water)
+                '#2E5090',  # Medium blue (shallow water)
+                '#D2B48C',  # Sand
+                '#90EE90',  # Light green (low terrain)
+                '#8B7355',  # Brown (medium terrain)
+                '#FFFFFF'   # White (high terrain)
+            ]
+            n_bins = 256
+            custom_cmap = LinearSegmentedColormap.from_list('terrain_custom', colors_list, N=n_bins)
+            
+            # Normalize heights to colormap range
+            # Water gets first 20% of colormap (below 0)
+            # Sand gets next 5% (0-10m)
+            # Terrain gets remaining 75% (10m+)
+            normalized_heights = np.zeros_like(heights)
+            water_range = 0.2
+            sand_range = 0.05
+            terrain_start = water_range + sand_range
+            
+            # Map water to [0, water_range]
+            if np.any(water_mask):
+                normalized_heights[water_mask] = (heights[water_mask] - min_alt) / (-min_alt) * water_range
+            
+            # Map sand to [water_range, terrain_start]
+            if np.any(sand_mask):
+                normalized_heights[sand_mask] = water_range + (heights[sand_mask] / 10.0) * sand_range
+            
+            # Map terrain to [terrain_start, 1.0]
+            if np.any(terrain_mask):
+                terrain_min = 10.0
+                terrain_span = max_alt - terrain_min
+                if terrain_span > 0:
+                    normalized_heights[terrain_mask] = terrain_start + ((heights[terrain_mask] - terrain_min) / terrain_span) * (1.0 - terrain_start)
+                else:
+                    normalized_heights[terrain_mask] = terrain_start
+            
+            im = ax.imshow(normalized_heights, extent=[0, map_size, 0, map_size], 
+                          cmap=custom_cmap, alpha=alpha, origin='lower', zorder=1)
             return im
     
     def _create_roads_layer(self, ax, color: str = None, width: float = 1.0):
@@ -135,7 +219,7 @@ class Map2DVisualizer:
             start_3d, end_3d = segment
             xs = [start_3d[0], end_3d[0]]
             zs = [start_3d[2], end_3d[2]]  # Use Z coordinate for 2D plot
-            ax.plot(xs, zs, color=color, linewidth=width, alpha=0.8)
+            ax.plot(xs, zs, color=color, linewidth=width, alpha=0.8, zorder=3)
     
     def _create_cities_layer(self, ax):
         """Create city blocks layer with spawnable/obstacle distinction."""
@@ -166,7 +250,7 @@ class Map2DVisualizer:
                 rect = patches.Rectangle(
                     (block_x + min_rel[0], block_z + min_rel[2]),
                     width, height,
-                    linewidth=0.5, edgecolor='black', facecolor=color, alpha=0.6
+                    linewidth=0.5, edgecolor='black', facecolor=color, alpha=0.6, zorder=3
                 )
                 ax.add_patch(rect)
     
@@ -209,11 +293,43 @@ class Map2DVisualizer:
             # Handle both unit objects and unit dictionaries (from mission.units)
             if isinstance(unit_data, dict):
                 unit = unit_data.get('unit_obj', unit_data)
+                # Also check for lastValidPlacement in dict (fallback position)
+                fallback_pos = unit_data.get('lastValidPlacement')
             else:
                 unit = unit_data
+                fallback_pos = None
+            
+            # Check if this is the player unit (make it more visible)
+            is_player = False
+            if hasattr(unit, 'unit_id'):
+                unit_id_lower = str(unit.unit_id).lower()
+                is_player = 'player' in unit_id_lower or unit_id_lower == 'playerspawn'
+            elif hasattr(unit, 'unit_name'):
+                unit_name_lower = str(unit.unit_name).lower()
+                is_player = unit_name_lower == 'player'
                 
-            pos = unit.global_position
-            rot = unit.rotation
+            # Get position with fallback
+            try:
+                pos = getattr(unit, 'global_position', None) or fallback_pos
+                if pos is None:
+                    self.logger.warning(f"Unit {getattr(unit, 'unit_name', 'unknown')} has no position, skipping")
+                    continue
+                # Ensure position is a list/tuple with at least 3 elements
+                if not isinstance(pos, (list, tuple)) or len(pos) < 3:
+                    self.logger.warning(f"Unit {getattr(unit, 'unit_name', 'unknown')} has invalid position {pos}, skipping")
+                    continue
+                pos = tuple(pos)
+            except (AttributeError, TypeError) as e:
+                self.logger.warning(f"Could not get position for unit: {e}, skipping")
+                continue
+            
+            # Check if position is within map bounds
+            map_size = getattr(self.tc, 'total_map_size_meters', 196608.0)
+            if pos[0] < 0 or pos[0] > map_size or pos[2] < 0 or pos[2] > map_size:
+                self.logger.warning(f"Unit {getattr(unit, 'unit_name', 'unknown')} at {pos} is outside map bounds (0-{map_size}), skipping")
+                continue
+            
+            rot = getattr(unit, 'rotation', [0, 0, 0])
             team = getattr(unit, 'team', 'Allied')
             
             # Team color
@@ -227,15 +343,39 @@ class Map2DVisualizer:
                 color = self.colors['neutral_units']
                 label = 'Neutral Units'
             
-            # Unit position
-            ax.scatter(pos[0], pos[2], s=100, c=color, marker='o', 
-                      edgecolors='black', linewidth=1,
-                      label=label if not hasattr(ax, f'_{team.lower()}_labeled') else "",
-                      zorder=8)
-            setattr(ax, f'_{team.lower()}_labeled', True)
+            # Unit position - make player spawn more visible
+            if is_player:
+                # Player spawn: larger, brighter, with special marker
+                ax.scatter(pos[0], pos[2], s=400, c='#00FF00', marker='*', 
+                          edgecolors='black', linewidth=3,
+                          label='Player Spawn' if not hasattr(ax, '_player_labeled') else "",
+                          zorder=15, alpha=0.9)
+                ax._player_labeled = True
+                
+                # Add circle around player spawn for visibility
+                circle = plt.Circle((pos[0], pos[2]), 2000, fill=False, 
+                                   color='#00FF00', linewidth=3, 
+                                   linestyle='--', alpha=0.8, zorder=14)
+                ax.add_patch(circle)
+                
+                # Add label
+                ax.annotate('PLAYER', (pos[0], pos[2]), 
+                           xytext=(0, -30), textcoords='offset points',
+                           ha='center', fontsize=12, fontweight='bold',
+                           bbox=dict(boxstyle="round,pad=0.5", 
+                                    facecolor='#00FF00', alpha=0.8,
+                                    edgecolor='black', linewidth=2),
+                           zorder=16, color='black')
+            else:
+                # Regular units
+                ax.scatter(pos[0], pos[2], s=100, c=color, marker='o', 
+                          edgecolors='black', linewidth=1,
+                          label=label if not hasattr(ax, f'_{team.lower()}_labeled') else "",
+                          zorder=8)
+                setattr(ax, f'_{team.lower()}_labeled', True)
             
-            # Facing indicator (small arrow)
-            if rot and len(rot) >= 2:
+            # Facing indicator (small arrow) - skip for player to avoid clutter
+            if rot and len(rot) >= 2 and not is_player:
                 yaw_rad = math.radians(rot[1])
                 dx = math.cos(yaw_rad) * 50  # Arrow length
                 dz = math.sin(yaw_rad) * 50
@@ -257,14 +397,16 @@ class Map2DVisualizer:
             
             for i, waypoint in enumerate(waypoints):
                 pos = waypoint.global_point
-                ax.scatter(pos[0], pos[2], s=80, c=self.colors['waypoints'], 
-                          marker='^', edgecolors='black', linewidth=1,
+                # Make waypoints smaller and less intrusive
+                ax.scatter(pos[0], pos[2], s=40, c=self.colors['waypoints'], 
+                          marker='^', edgecolors='black', linewidth=0.5, alpha=0.7,
                           label='Waypoints' if i == 0 else "", zorder=9)
                 
-                # Waypoint number
-                ax.annotate(f'{i+1}', (pos[0], pos[2]), 
-                           xytext=(0, 10), textcoords='offset points',
-                           ha='center', fontsize=8, fontweight='bold')
+                # Only show waypoint numbers for first few waypoints to reduce clutter
+                if i < 10:  # Only label first 10 waypoints
+                    ax.annotate(f'{i+1}', (pos[0], pos[2]), 
+                               xytext=(0, 8), textcoords='offset points',
+                               ha='center', fontsize=6, fontweight='normal', alpha=0.8)
         
         if paths:
             self.logger.info(f"Drawing {len(paths)} paths...")
@@ -280,7 +422,7 @@ class Map2DVisualizer:
                        linewidth=2, linestyle='--', alpha=0.8, zorder=6)
     
     def _create_objectives_layer(self, ax):
-        """Create objectives layer."""
+        """Create objectives layer with enhanced visibility."""
         if not self.has_mission_data:
             return
             
@@ -290,29 +432,275 @@ class Map2DVisualizer:
             
         self.logger.info(f"Drawing {len(objectives)} objectives...")
         
+        # Get mission units for target resolution
+        mission_units = {}
+        if hasattr(self.mission, 'units'):
+            if isinstance(self.mission.units, dict):
+                for unit_entry in self.mission.units.values():
+                    if isinstance(unit_entry, dict):
+                        unit_obj = unit_entry.get('unit_obj')
+                        unit_id = unit_entry.get('unitInstanceID')
+                    else:
+                        unit_obj = getattr(unit_entry, 'unit_obj', None)
+                        unit_id = getattr(unit_entry, 'unitInstanceID', None)
+                    if unit_obj and unit_id is not None:
+                        mission_units[unit_id] = unit_obj
+            elif isinstance(self.mission.units, list):
+                for unit_entry in self.mission.units:
+                    if isinstance(unit_entry, dict):
+                        unit_obj = unit_entry.get('unit_obj')
+                        unit_id = unit_entry.get('unitInstanceID')
+                    else:
+                        unit_obj = getattr(unit_entry, 'unit_obj', None)
+                        unit_id = getattr(unit_entry, 'unitInstanceID', None)
+                    if unit_obj and unit_id is not None:
+                        mission_units[unit_id] = unit_obj
+        
         for i, obj in enumerate(objectives):
-            # Try to get objective position (this might need adjustment based on objective type)
-            pos = None
-            if hasattr(obj, 'position'):
-                pos = obj.position
-            elif hasattr(obj, 'waypoint_id') and self.mission.waypoints:
-                # Find associated waypoint
+            obj_name = getattr(obj, 'name', f'Objective {i+1}')
+            obj_type = getattr(obj, 'type', 'Unknown')
+            obj_required = getattr(obj, 'required', True)
+            
+            # Collect all positions for this objective
+            objective_positions = []
+            
+            # 1. Check for direct position attribute
+            if hasattr(obj, 'position') and obj.position:
+                objective_positions.append(obj.position)
+            
+            # 2. Check for waypoint reference
+            elif hasattr(obj, 'waypoint') and obj.waypoint:
+                wpt_ref = obj.waypoint
+                if hasattr(wpt_ref, 'global_point'):
+                    objective_positions.append(wpt_ref.global_point)
+                elif hasattr(wpt_ref, 'position'):
+                    objective_positions.append(wpt_ref.position)
+                elif isinstance(wpt_ref, (int, str)) and self.mission.waypoints:
+                    # Find waypoint by ID
+                    for wp in self.mission.waypoints:
+                        wp_id = getattr(wp, 'id', None)
+                        if wp_id == wpt_ref or str(wp_id) == str(wpt_ref):
+                            if hasattr(wp, 'global_point'):
+                                objective_positions.append(wp.global_point)
+                            elif hasattr(wp, 'position'):
+                                objective_positions.append(wp.position)
+                            break
+            
+            # 3. For Destroy objectives, find target units via fields['targets']
+            if obj_type == "Destroy" and hasattr(obj, 'fields') and isinstance(obj.fields, dict):
+                targets_str = obj.fields.get('targets', '')
+                if targets_str:
+                    # Parse semicolon-separated target IDs: "id1;id2;"
+                    target_ids = [tid.strip() for tid in targets_str.split(';') if tid.strip()]
+                    for target_id_str in target_ids:
+                        try:
+                            target_id = int(target_id_str)
+                            # Find unit with this ID
+                            if target_id in mission_units:
+                                unit_obj = mission_units[target_id]
+                                if hasattr(unit_obj, 'global_position'):
+                                    pos = unit_obj.global_position
+                                    if pos and len(pos) >= 3:
+                                        objective_positions.append(pos)
+                        except (ValueError, TypeError):
+                            # Try string matching
+                            for uid, unit_obj in mission_units.items():
+                                unit_name = getattr(unit_obj, 'unit_name', '')
+                                if str(target_id_str) in str(unit_name) or str(target_id_str) == str(uid):
+                                    if hasattr(unit_obj, 'global_position'):
+                                        pos = unit_obj.global_position
+                                        if pos and len(pos) >= 3:
+                                            objective_positions.append(pos)
+                                            break
+            
+            # 4. Fallback: check waypoint_id attribute
+            if not objective_positions and hasattr(obj, 'waypoint_id') and self.mission.waypoints:
                 for wp in self.mission.waypoints:
-                    if wp.id == obj.waypoint_id:
-                        pos = wp.position
+                    wp_id = getattr(wp, 'id', None)
+                    if wp_id == obj.waypoint_id or str(wp_id) == str(obj.waypoint_id):
+                        if hasattr(wp, 'global_point'):
+                            objective_positions.append(wp.global_point)
+                        elif hasattr(wp, 'position'):
+                            objective_positions.append(wp.position)
                         break
             
-            if pos:
-                ax.scatter(pos[0], pos[2], s=120, c=self.colors['objectives'], 
-                          marker='*', edgecolors='black', linewidth=1,
-                          label='Objectives' if i == 0 else "", zorder=11)
+            # Draw objective markers at all found positions
+            if objective_positions:
+                # Use different colors for required vs optional
+                marker_color = '#FF0000' if obj_required else '#FFA500'  # Red for required, orange for optional
+                marker_size = 200 if obj_required else 150
                 
-                # Objective label
-                name = getattr(obj, 'objective_name', f'Obj {i+1}')
-                ax.annotate(name, (pos[0], pos[2]), 
-                           xytext=(10, 10), textcoords='offset points',
-                           fontsize=8, bbox=dict(boxstyle="round,pad=0.3", 
-                                                facecolor='white', alpha=0.8))
+                for j, pos in enumerate(objective_positions):
+                    # Extract x, z coordinates (y is altitude)
+                    x = pos[0] if len(pos) > 0 else 0
+                    z = pos[2] if len(pos) > 2 else pos[1] if len(pos) > 1 else 0
+                    
+                    # Draw large star marker
+                    ax.scatter(x, z, s=marker_size, c=marker_color, 
+                              marker='*', edgecolors='black', linewidth=2,
+                              label='Objectives (Required)' if i == 0 and j == 0 and obj_required else 
+                                     'Objectives (Optional)' if i == 0 and j == 0 and not obj_required else "",
+                              zorder=12, alpha=0.9)
+                    
+                    # Draw circle around objective for visibility (scale to map size)
+                    map_size = self.tc.total_map_size_meters if hasattr(self.tc, 'total_map_size_meters') else 200000
+                    circle_radius = max(1000, map_size * 0.01)  # 1% of map size, minimum 1km
+                    circle = plt.Circle((x, z), circle_radius, fill=False, 
+                                       color=marker_color, linewidth=2, 
+                                       linestyle='--', alpha=0.6, zorder=11)
+                    ax.add_patch(circle)
+                    
+                    # Objective label with number (more subtle)
+                    label_text = f"{i+1}" if len(objective_positions) == 1 else f"{i+1}-{j+1}"
+                    ax.annotate(label_text, (x, z), 
+                               xytext=(8, 8), textcoords='offset points',
+                               fontsize=8, fontweight='normal',
+                               bbox=dict(boxstyle="round,pad=0.2", 
+                                        facecolor='white', alpha=0.7,
+                                        edgecolor=marker_color, linewidth=1),
+                               zorder=13, color='black')
+            else:
+                # No position found - log warning but don't draw
+                self.logger.debug(f"Objective '{obj_name}' has no position information")
+    
+    def _create_territories_layer(self, ax, world_state=None):
+        """Create territories layer showing friendly, enemy, and neutral zones."""
+        # Get world state from mission if available
+        if world_state is None:
+            if hasattr(self.mission, 'world_state'):
+                world_state = self.mission.world_state
+            elif hasattr(self.mission, 'wsm'):
+                world_state = self.mission.wsm
+            else:
+                return
+        
+        if not hasattr(world_state, 'territory_zones'):
+            return
+        
+        self.logger.info("Drawing territory zones...")
+        
+        territory_colors = {
+            'friendly': self.colors['friendly_territory'],
+            'enemy': self.colors['enemy_territory'],
+            'neutral': self.colors['neutral_territory']
+        }
+        
+        territory_labels = {
+            'friendly': 'Friendly Territory',
+            'enemy': 'Enemy Territory',
+            'neutral': 'Neutral Territory'
+        }
+        
+        from pytol.misc.math_utils import is_position_in_circle
+        
+        # Draw territories in order: friendly, enemy, neutral
+        for territory_type in ['friendly', 'enemy', 'neutral']:
+            zones = world_state.territory_zones.get(territory_type, [])
+            if not zones:
+                continue
+            
+            color = territory_colors.get(territory_type, '#808080')
+            label = territory_labels.get(territory_type, territory_type)
+            labeled = False
+            
+            for zone in zones:
+                if zone.get('type') == 'circle':
+                    center = zone['center']
+                    radius = zone['radius']
+                    
+                    # Draw filled circle
+                    circle = patches.Circle(
+                        center, radius,
+                        color=color, alpha=0.2, edgecolor=color, linewidth=2,
+                        label=label if not labeled else "", zorder=2
+                    )
+                    ax.add_patch(circle)
+                    labeled = True
+                    
+                elif zone.get('type') == 'polygon':
+                    vertices = zone.get('vertices', [])
+                    if len(vertices) >= 3:
+                        # Close the polygon if not already closed
+                        if vertices[0] != vertices[-1]:
+                            vertices = vertices + [vertices[0]]
+                        
+                        # Draw filled polygon
+                        polygon = patches.Polygon(
+                            vertices,
+                            color=color, alpha=0.2, edgecolor=color, linewidth=2,
+                            label=label if not labeled else "", zorder=2
+                        )
+                        ax.add_patch(polygon)
+                        labeled = True
+    
+    def _create_key_points_layer(self, ax, world_state=None):
+        """Create layer showing mission key points (strategic locations)."""
+        # Get world state from mission if available
+        if world_state is None:
+            if hasattr(self.mission, 'world_state'):
+                world_state = self.mission.world_state
+            elif hasattr(self.mission, 'wsm'):
+                world_state = self.mission.wsm
+            else:
+                return
+        
+        # Try to get mission key points from assets
+        key_points = None
+        try:
+            if hasattr(world_state, 'assets'):
+                key_points_asset = world_state.assets.get('mission_key_points')
+                if key_points_asset and isinstance(key_points_asset, dict):
+                    key_points = key_points_asset.get('points')
+        except Exception:
+            pass
+        
+        if not key_points:
+            return
+        
+        self.logger.info(f"Drawing {len(key_points)} mission key points...")
+        
+        # Different markers/colors for different point types
+        point_styles = {
+            'objective': {'marker': '*', 'color': '#9900CC', 'size': 150},
+            'threat': {'marker': 'X', 'color': '#FF0000', 'size': 120},
+            'defense': {'marker': 's', 'color': '#0066CC', 'size': 100},
+            'staging': {'marker': '^', 'color': '#00AA00', 'size': 100},
+        }
+        
+        for point_id, point_info in key_points.items():
+            pos = point_info.get('position')
+            if not pos or len(pos) < 3:
+                continue
+            
+            point_type = point_info.get('type', 'objective')
+            mission_role = point_info.get('mission_role', '')
+            radius = point_info.get('radius', 5000)
+            priority = point_info.get('priority', 5)
+            
+            # Get style for this point type
+            style = point_styles.get(point_type, point_styles['objective'])
+            
+            # Draw influence radius circle (semi-transparent)
+            circle = patches.Circle(
+                (pos[0], pos[2]), radius,
+                color=style['color'], alpha=0.1, edgecolor=style['color'], 
+                linewidth=1, linestyle='--', zorder=1
+            )
+            ax.add_patch(circle)
+            
+            # Draw key point marker
+            ax.scatter(pos[0], pos[2], s=style['size'], c=style['color'],
+                      marker=style['marker'], edgecolors='black', linewidth=1.5,
+                      label=f'Key Point ({point_type})' if point_id == list(key_points.keys())[0] else "",
+                      zorder=10)
+            
+            # Label with priority/role
+            label_text = f"{mission_role}\nP{priority}" if mission_role else f"P{priority}"
+            ax.annotate(label_text, (pos[0], pos[2]),
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=7, fontweight='bold',
+                       bbox=dict(boxstyle="round,pad=0.2", 
+                                facecolor='white', alpha=0.8, edgecolor=style['color']))
     
     def save_terrain_overview(self, filename: str, style: str = 'contour') -> str:
         """
@@ -332,8 +720,9 @@ class Map2DVisualizer:
         # Create terrain layer
         cs = self._create_terrain_layer(ax, style=style)
         
-        # Add roads and cities
+        # Add roads, territories, cities
         self._create_roads_layer(ax)
+        self._create_territories_layer(ax)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         
@@ -359,7 +748,7 @@ class Map2DVisualizer:
         plt.savefig(filename, dpi=self.dpi, bbox_inches='tight')
         plt.close()
         
-        self.logger.info(f"✓ Terrain overview saved: {filename}")
+        self.logger.info(f"Terrain overview saved: {filename}")
         return filename
     
     def save_mission_overview(self, filename: str, terrain_style: str = 'contour', clean_mode: bool = False) -> str:
@@ -379,13 +768,31 @@ class Map2DVisualizer:
         
         self.logger.info(f"Creating mission overview: {filename}")
         
-        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
+        # Create figure with wider layout to accommodate objectives panel on the right
+        # Use gridspec for better control over layout
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=(self.figsize[0] * 1.8, self.figsize[1]), dpi=self.dpi)
+        gs = GridSpec(1, 2, figure=fig, width_ratios=[2, 1.8], wspace=0.1)
         
-        # Create all layers
+        # Main map axis (left side)
+        ax = fig.add_subplot(gs[0])
+        
+        # Create all layers (order matters: terrain first as background)
         cs = None
         if not clean_mode:
-            cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.6)
+            # Make terrain more visible with higher alpha and ensure it's background layer
+            cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.85)
+        
+        # Get world state for layers that need it
+        world_state = None
+        if hasattr(self.mission, 'world_state'):
+            world_state = self.mission.world_state
+        elif hasattr(self.mission, 'wsm'):
+            world_state = self.mission.wsm
+        
         self._create_roads_layer(ax)
+        self._create_territories_layer(ax, world_state=world_state)
+        self._create_key_points_layer(ax, world_state=world_state)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         self._create_units_layer(ax)
@@ -411,14 +818,79 @@ class Map2DVisualizer:
             cbar = plt.colorbar(cs, ax=ax, shrink=0.8)
             cbar.set_label('Elevation (m)', fontsize=10)
         
-        # Legend
-        ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
+        # Legend (move to upper left to avoid overlap with objectives panel)
+        ax.legend(loc='upper left', framealpha=0.9, fontsize=10)
         
-        plt.tight_layout()
+        # Objectives information panel (right side)
+        ax_info = fig.add_subplot(gs[1])
+        ax_info.axis('off')  # Hide axes for text panel
+        
+        # Build objectives text
+        objectives_text = ["MISSION OBJECTIVES", "=" * 30, ""]
+        
+        if hasattr(self.mission, 'objectives') and self.mission.objectives:
+            for i, obj in enumerate(self.mission.objectives):
+                obj_name = getattr(obj, 'name', f'Objective {i+1}')
+                obj_type = getattr(obj, 'type', 'Unknown')
+                obj_info = getattr(obj, 'info', '')
+                obj_required = getattr(obj, 'required', True)
+                obj_reward = getattr(obj, 'completionReward', 0)
+                
+                # Format objective entry
+                required_str = "REQUIRED" if obj_required else "OPTIONAL"
+                reward_str = f"Reward: {obj_reward}" if obj_reward > 0 else ""
+                
+                objectives_text.append(f"{i+1}. {obj_name}")
+                objectives_text.append(f"   Type: {obj_type}")
+                if obj_info:
+                    # Wrap long info text
+                    info_lines = obj_info.split('\n')
+                    for line in info_lines[:3]:  # Limit to 3 lines
+                        if len(line) > 50:
+                            line = line[:47] + "..."
+                        objectives_text.append(f"   {line}")
+                objectives_text.append(f"   Status: {required_str}")
+                if reward_str:
+                    objectives_text.append(f"   {reward_str}")
+                objectives_text.append("")
+        else:
+            objectives_text.append("No objectives defined")
+        
+        # Add mission briefing if available
+        if hasattr(self.mission, 'description') and self.mission.description:
+            objectives_text.append("")
+            objectives_text.append("MISSION BRIEFING")
+            objectives_text.append("=" * 30)
+            # Wrap briefing text
+            briefing = self.mission.description
+            words = briefing.split()
+            lines = []
+            current_line = ""
+            for word in words:
+                if len(current_line + word) < 50:
+                    current_line += word + " "
+                else:
+                    if current_line:
+                        lines.append(current_line.strip())
+                    current_line = word + " "
+            if current_line:
+                lines.append(current_line.strip())
+            
+            for line in lines[:8]:  # Limit to 8 lines
+                objectives_text.append(line)
+        
+        # Display text
+        full_text = "\n".join(objectives_text)
+        ax_info.text(0.03, 0.97, full_text, transform=ax_info.transAxes,
+                    fontsize=11, verticalalignment='top', family='monospace',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # Use subplots_adjust instead of tight_layout for GridSpec
+        plt.subplots_adjust(left=0.04, right=0.99, top=0.95, bottom=0.05, wspace=0.1)
         plt.savefig(filename, dpi=self.dpi, bbox_inches='tight')
         plt.close()
         
-        self.logger.info(f"✓ Mission overview saved: {filename}")
+        self.logger.info(f"Mission overview saved: {filename}")
         return filename
     
     def save_spawn_points_detail(self, filename: str, base_index: int = 0) -> str:
@@ -539,7 +1011,7 @@ class Map2DVisualizer:
         plt.savefig(filename, dpi=self.dpi, bbox_inches='tight')
         plt.close()
         
-        self.logger.info(f"✓ Spawn points detail saved: {filename}")
+        self.logger.info(f"Spawn points detail saved: {filename}")
         return filename
 
     def get_terrain_overview_bytes(self, style: str = 'contour', format: str = 'PNG') -> bytes:
@@ -596,7 +1068,7 @@ class Map2DVisualizer:
         image_bytes = buffer.getvalue()
         buffer.close()
         
-        self.logger.info(f"✓ Terrain overview bytes created ({len(image_bytes)} bytes)")
+        self.logger.info(f"Terrain overview bytes created ({len(image_bytes)} bytes)")
         return image_bytes
 
     def get_mission_overview_bytes(self, terrain_style: str = 'contour', clean_mode: bool = False, format: str = 'PNG') -> bytes:
@@ -625,11 +1097,13 @@ class Map2DVisualizer:
         
         fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
         
-        # Create all layers
+        # Create all layers (order matters: terrain first as background)
         cs = None
         if not clean_mode:
-            cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.6)
+            # Make terrain more visible with higher alpha and ensure it's background layer
+            cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.85)
         self._create_roads_layer(ax)
+        self._create_territories_layer(ax)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         self._create_units_layer(ax)
@@ -669,7 +1143,7 @@ class Map2DVisualizer:
         image_bytes = buffer.getvalue()
         buffer.close()
         
-        self.logger.info(f"✓ Mission overview bytes created ({len(image_bytes)} bytes)")
+        self.logger.info(f"Mission overview bytes created ({len(image_bytes)} bytes)")
         return image_bytes
 
     def get_spawn_points_detail_bytes(self, base_index: int = 0, format: str = 'PNG') -> bytes:
@@ -746,7 +1220,7 @@ class Map2DVisualizer:
         image_bytes = buffer.getvalue()
         buffer.close()
         
-        self.logger.info(f"✓ Spawn points detail bytes created ({len(image_bytes)} bytes)")
+        self.logger.info(f"Spawn points detail bytes created ({len(image_bytes)} bytes)")
         return image_bytes
 
 
