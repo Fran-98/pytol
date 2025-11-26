@@ -12,7 +12,6 @@ This directory contains example scripts demonstrating various features of the Py
 
 #### 2D Static Maps (requires `pip install pytol[viz-light]`)
 - `example_2d_visualization.py` - Static map generation with matplotlib
-- `generate_procedural_missions.py` - **⭐ Procedural mission generator with 2D visualization**
 
 #### 3D Interactive (requires `pip install pytol[viz]`)  
 - `example_visualization.py` - Interactive 3D terrain and mission exploration
@@ -20,18 +19,17 @@ This directory contains example scripts demonstrating various features of the Py
 
 ### Terrain Analysis
 - `example_base_spawns.py` - Working with airbase spawn points
-- Various analysis scripts in `../test_scripts/` directory
 
 ## Quick Start
 
-### Generate Random Missions with Visualization
-
-The most comprehensive example showing both procedural generation and 2D visualization:
+### Basic Mission Creation
 
 ```bash
-# Install with 2D visualization
-pip install pytol[viz-light]
+# Install pytol
+pip install pytol
 
+# Run a basic example
+python operation_pytol.py
 ```
 
 ### Basic 2D Visualization

@@ -8,7 +8,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/franman)
 
-**Pytol** is a Python library for procedurally generating missions for the VR flight game **VTOL VR**. It provides tools to:
+**Pytol** is a Python library for creating missions for the VR flight game **VTOL VR**. It provides tools to:
 
 * Load and analyze VTOL VR custom map data (`.vtm` files).
 * Calculate terrain height, surface normals, and object placements.
@@ -428,8 +428,6 @@ See `examples/example_visualization.py` for a complete demo.
 Pytol includes several consolidated frameworks that eliminate code duplication and provide consistent, well-tested APIs:
 
 * **Math Utilities** (`pytol.misc.math_utils`): Distance calculations, angle generation, position manipulation, bounds checking, and more. Eliminates 200+ lines of duplicate math code.
-
-* **Position Scoring** (`pytol.procedural.position_scoring`): Specialized scoring systems for evaluating tactical positions (airbase placement, defensive positions, logistics hubs, tactical objectives). Consolidates 400-500 lines of scoring logic.
 
 * **Validation Framework** (`pytol.misc.validation_framework`): Comprehensive validation for positions, numeric values, lists, and dictionaries. Provides 300+ lines of reusable validation logic.
 

@@ -1,6 +1,6 @@
 # Mission Creation Guide
 
-This guide covers how to create VTOL VR missions programmatically using Pytol.
+This guide covers how to create VTOL VR missions programmatically using Pytol. For a system-by-system inventory of everything the library serializes, see the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
 
 ## Quick Start
 
@@ -58,6 +58,17 @@ mission.save_mission("./output")  # Creates: ./output/strike_mission_1/
 - Prefer maps with HeightMap terrain for best results with Pytol's terrain sampler. Recommended: `hMap2`, `costaOeste`, `Archipielago_1`.
 - The map `Akutan` is primarily mesh-based in Unity (not heightmap-generated), so it can not be used with this library.
 - Even with our accurate recreation, expect small height mismatches of up to ~1 m in some spots (bilinear vs mesh interpolation, collider differences). Always validate spawns in-game or add a small offset.
+
+## Terrain Integration Workflow
+
+Pytol mirrors VTOL VR's terrain pipeline on mission load. Use the shared `TerrainCalculator` and `MissionTerrainHelper` instances exposed by `Mission` instead of sampling ad-hoc. The terrain internals are described in detail in Section 2 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
+
+1. **Baseline placement:** `mission.tc.get_asset_placement(x, z, yaw)` returns a terrain-aligned `(position, rotation)` tuple that reproduces the editor’s snap-to-ground.
+2. **Smart placement:** `mission.tc.get_smart_placement(x, z, yaw)` inspects static prefabs, road splines, and procedural city tiles extracted from the Unity project. It will attach vehicles to roads, parking pads, rooftops, or open terrain exactly like the in-game placement gizmos.
+3. **High-level searches:** `mission.helper` exposes tactical queries (`find_landing_zones`, `find_convoy_route`, `find_observation_post`, `has_line_of_sight`) that operate on the same cached meshes. These helpers return scored candidates you can feed directly into unit constructors.
+4. **Base and runway data:** `mission.add_unit_at_base_spawn(...)` pulls spawn pads from the packaged base spawn database, guaranteeing taxi paths and runway headings line up with Unity’s baked data.
+
+Always reuse these helpers when building new features—hand-authored coordinates drift over time as Unity assets change, while the calculators stay synchronized with `E:\VTOL VR UNITY\Assets`.
 
 ## Core Concepts
 
@@ -607,42 +618,59 @@ print("Mission created successfully!")
 
 ## Resources
 
-Resources allow you to include custom audio briefings and images in your mission. Pytol automatically copies resource files to the mission directory when you save.
+Resources allow you to include custom audio, imagery, and other mission assets. Pytol registers each asset in the ResourceManifest and copies files into the mission folder when you call `save_mission()`. See Section 3 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md) for the backing database loaders and manifest flow.
 
 ### Adding Audio Briefings
 
 ```python
-# Add a custom audio briefing
 mission.add_resource(
     res_id=1,
-    path="C:/MyMissions/audio/briefing.wav"
+    path=r"C:\MyMissions\audio\briefing.wav"
 )
 ```
 
-The audio file will be automatically copied to `<mission_folder>/audio/briefing.wav` when you save the mission.
+The audio file is copied to `<mission_folder>/audio/briefing.wav` at save time.
 
 ### Adding Custom Images
 
 ```python
-# Add a custom HUD overlay or briefing image
 mission.add_resource(
     res_id=2,
-    path="./images/tactical_map.png"
+    path=r"./images/tactical_map.png"
 )
 ```
 
-The image file will be automatically copied to `<mission_folder>/images/tactical_map.png` when you save the mission.
+Images are copied to `<mission_folder>/images/tactical_map.png` during the same pass.
 
 ### Resource IDs
 
-- Resource IDs must be unique integers
-- Use IDs 1-999 for your custom resources
-- The game uses these IDs to reference resources in briefing notes and other mission elements
+- Resource IDs must be unique integers (reuse logs a warning and overwrites the previous entry)
+- Reserve consistent ranges (e.g., 1xx for audio, 2xx for imagery) to keep manifests tidy
+- The game looks up resources by ID when rendering briefing notes and HUD overlays
 
 ### Supported File Types
 
-- **Audio**: `.wav`, `.ogg`, `.mp3` → copied to `audio/` subdirectory
-- **Images**: `.png`, `.jpg`, `.jpeg`, `.bmp` → copied to `images/` subdirectory
+- **Audio**: `.wav`, `.ogg`, `.mp3` – copied to the `audio/` subdirectory
+- **Images**: `.png`, `.jpg`, `.jpeg`, `.bmp` – copied to the `images/` subdirectory
+- Any other extension is routed to `resources/` and emits a warning so you can verify VTOL VR compatibility
+
+### Referencing Resources in Mission Blocks
+
+- Always reference the *relative* path that will exist inside the mission folder (`audio/...`, `images/...`) when populating dataclasses such as `BriefingNote`
+- Pytol rewrites absolute source paths to a relative path during `save_mission()`; missing files generate a `?` warning and the manifest entry is removed
+- Example linking a briefing note to an audio clip:
+
+```python
+from pytol.classes.mission_objects import BriefingNote
+
+mission.add_resource(3, r"E:\Audio\intro.wav")
+mission.add_briefing_note(
+    BriefingNote(
+        text="Secure the airspace south of Bravo Base.",
+        audio_clip_path="audio/intro.wav",
+    )
+)
+```
 
 ### Example: Complete Mission with Audio Briefing
 
@@ -656,20 +684,18 @@ mission = Mission(
     map_id="hMap2"
 )
 
-# Add custom audio briefing
 mission.add_resource(1, "path/to/briefing.wav")
 
 # Add units, objectives, etc...
 
-# Save mission (automatically copies resource files)
 mission.save_mission("./output")
 ```
 
 When you call `save_mission()`, Pytol will:
 1. Create the mission directory structure
 2. Copy the map files
-3. **Automatically copy all resource files to appropriate subdirectories**
-4. Generate the `.vts` file with correct relative paths in the ResourceManifest
+3. Copy every registered resource into `audio/`, `images/`, or `resources/`
+4. Generate the `.vts` file with manifest entries pointing to the relative paths
 
 ## Tips and Best Practices
 
@@ -748,16 +774,6 @@ viz = MissionVisualizer(mission)
 viz.show()
 ```
 
-### Procedural Mission Generator Example
-
-Try the complete procedural mission generator with automatic visualization:
-
-```bash
-python generate_procedural_missions.py
-```
-
-This creates randomized tactical missions with professional 2D maps automatically.
-
 ## See Also
 
 - [2D Visualization Guide](../pytol/visualization/README_2D.md) - Complete 2D visualization documentation
@@ -831,4 +847,46 @@ mission.add_random_event(re)
 - If you pass a string ID, only a reference (or placeholder) is emitted.
 - methodParameters in simple conditionals are now always formatted as a nested block for full VTS compatibility.
 - Proximity triggers only emit `waypoint = null` if no waypoint is provided.
+
+## Global Values & Conditionals
+
+Use global values to track mission state and gate logic with the same mechanisms the VTOL VR editor provides. Additional context on conditional classes and global action helpers lives in Sections 6–7 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
+
+```python
+from pytol.classes.mission_objects import GlobalValue, Trigger
+from pytol.classes.conditionals import Sccglobalvalue, Sccunit
+
+mission.add_global_value(GlobalValue(name="counter", initial_value=0))
+
+# Event helper usage mirrors editor events (set, increment, etc.)
+# Assume target_wpt_id and enemy_unit_id were created earlier in the mission setup
+mission.add_trigger_event(
+    Trigger(
+        id=101,
+        name="Increment Counter",
+        trigger_type="Proximity",
+        waypoint=target_wpt_id,
+        radius=200,
+        event_targets=[
+            mission.global_actions["counter"].increment_value(),
+        ],
+    )
+)
+
+# Conditionals are registered once and then referenced by ID
+cond_id = mission.add_conditional(
+    Sccglobalvalue(gv="counter", comparison="Greater_Than", c_value=3)
+)
+mission.add_conditional(
+    Sccunit(unit=str(enemy_unit_id), method_name="IsDestroyed"),
+    conditional_id="destroyed_enemy"
+)
+```
+
+- `add_global_value` stores values under `mission.global_values`; access action helpers through `mission.global_actions["name"]`.
+- `add_conditional` accepts either a single conditional component or a full `ConditionalTree`. It returns the assigned string ID (e.g., `_pytol_cond_0`) so triggers, objectives, event sequences, and random events can reference it.
+- When using `ConditionalTree`, call `tree.add_comp(comp_id, component)` for each node and `tree.set_root(comp_id)` before registration—the serializer emits the full `CONDITIONAL` block with editor-compatible `COMP` entries.
+- Destroy objectives run faster when backed by `Sccunit` or `SccunitGroup` conditionals; you can reference the same IDs inside event sequences or `ConditionalAction` blocks to centralize mission logic.
+
+
 
