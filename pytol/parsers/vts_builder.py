@@ -1603,6 +1603,17 @@ class Mission:
         # Store the source path for later copying during save_mission()
         self.resource_manifest[res_id] = path
 
+    def add_audio(self, path: str) -> str:
+        """
+        Register an .ogg/.mp3 file and return the path to use in actions and briefing notes
+        (e.g. SystemActions().radio_message(mission.add_audio("awacs_01.ogg"))). The game only plays
+        .ogg and .mp3 (VTResources.supportedAudioExtensions). The file is copied to <mission>/audio/ on save.
+        """
+        if os.path.splitext(path)[1].lower() not in ('.ogg', '.mp3'):
+            raise ValueError(f"VTOL VR only plays .ogg and .mp3 audio: {path}")
+        self.add_resource(max(self.resource_manifest, default=0) + 1, path)
+        return f"audio/{os.path.basename(path)}"
+
     def add_conditional(self, conditional_obj, conditional_id: Optional[Union[str, int]] = None) -> int:
         """Adds a Conditional object or ConditionalTree, assigning an integer ID if needed."""
         from pytol.classes.conditionals import ConditionalTree
@@ -1926,7 +1937,9 @@ class Mission:
             else:
                 game_type = _PRIMITIVE_TYPES.get(p.type, p.type)
             value = p.value
-            if isinstance(value, (list, tuple)):
+            if game_type == 'FixedPoint':
+                value = _format_vector(value)  # FixedPoint.WriteValue: a global (x, y, z) vector
+            elif isinstance(value, (list, tuple)):
                 value = "".join(f"{_format_value(self._resolve_link_id(v))};" for v in value)
             else:
                 value = _format_value(self._resolve_link_id(value))
@@ -2724,12 +2737,11 @@ class Mission:
         self.logger.info(f"Mission saved '{path}' (UTF-8 no BOM, LF line endings)")
 
 
-    def save_mission(self, base_path: str) -> str:
+    def save_mission(self, base_path: str, copy_map: bool = True) -> str:
         """
-        Saves the mission .vts file and copies the associated map folder
-        into the specified base path. Also copies any resource files added
-        via add_resource() to their appropriate subdirectories.
-        Now includes robust validation and error handling for resources.
+        Saves the mission into <base_path>/<scenario_id>/: the .vts, the resource files added with
+        add_resource()/add_audio(), and (copy_map=True) the map folder. Campaigns pass copy_map=False and
+        keep a single map copy at the campaign root.
         """
 
         # Run all-block validation before saving (log-only; in strict mode highlight)
@@ -2763,7 +2775,9 @@ class Mission:
 
         # Copy map folder robustly
         try:
-            if not os.path.exists(self.map_path):
+            if not copy_map:
+                pass
+            elif not os.path.exists(self.map_path):
                 self.logger.error(f"Map path '{self.map_path}' does not exist. Mission will not be playable.")
             else:
                 shutil.copytree(

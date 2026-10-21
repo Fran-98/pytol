@@ -6,6 +6,7 @@ which group multiple missions together and enable multiplayer scenarios.
 """
 
 from typing import List, Optional
+import os
 from pathlib import Path
 from ..misc.logger import create_logger
 
@@ -131,8 +132,12 @@ class Campaign:
         Returns:
             String containing the complete .vtc file content
         """
-        # Convert equipment list to semicolon-separated string
-        equips_str = ";".join(self.starting_equips)
+        # Convert equipment list to semicolon-separated string; an empty list would leave the player unarmed
+        equips = self.starting_equips
+        if not equips:
+            from pytol.resources.equipment import get_equipment_for_vehicle
+            equips = get_equipment_for_vehicle(self.vehicle)
+        equips_str = ";".join(equips)
         if equips_str:
             equips_str += ";"  # VTOL VR format ends with semicolon
         
@@ -182,43 +187,21 @@ class Campaign:
             f.write(self.to_vtc_string())
         self._log(f"✓ Saved campaign file: {vtc_path.name}")
         
-        # Save each mission to its own subfolder
-        map_folders_to_copy = set()
-        
+        # Each mission in its own folder (with its resources); one shared map copy at the campaign root.
+        maps = {}
         for i, mission in enumerate(self.missions):
-            mission_folder_name = mission.scenario_id or f"mission_{i+1}"
-            mission_folder = output_path / mission_folder_name
-            mission_folder.mkdir(exist_ok=True)
-            
-            # Save only the .vts file (not the map folder - that goes at campaign root)
-            mission_file = mission_folder / f"{mission_folder_name}.vts"
-            mission._save_to_file(str(mission_file))
-            
-            self._log(f"✓ Saved mission {i+1}/{len(self.missions)}: {mission_folder_name}")
-            
-            # Track map folders to copy to campaign root (shared across missions)
-            if hasattr(mission, 'tc') and mission.tc:
-                tc = mission.tc
-                if hasattr(tc, 'map_directory') and tc.map_directory:
-                    map_folders_to_copy.add((tc.map_directory, tc.map_name))
-        
-        # Copy map folders to campaign root (shared across missions)
-        if copy_map_folders and map_folders_to_copy:
-            self._log("\nCopying map folders...")
-            for map_dir, map_name in map_folders_to_copy:
-                src_path = Path(map_dir)
-                dst_path = output_path / map_name
-                
-                if src_path.exists() and src_path.is_dir():
-                    try:
-                        import shutil
-                        if dst_path.exists():
-                            shutil.rmtree(dst_path)
-                        shutil.copytree(src_path, dst_path)
-                        self._log(f"✓ Copied map folder: {map_name}")
-                    except Exception as e:
-                        self._log(f"⚠ Warning: Could not copy map folder {map_name}: {e}")
-        
+            mission.save_mission(str(output_path), copy_map=False)
+            maps[mission.map_id] = mission.map_path
+            self._log(f"✓ Saved mission {i + 1}/{len(self.missions)}: {mission.scenario_id}")
+        if copy_map_folders:
+            import shutil
+            for map_id, map_path in maps.items():
+                if os.path.isdir(map_path):
+                    shutil.copytree(map_path, output_path / map_id, dirs_exist_ok=True)
+                    self._log(f"✓ Copied map folder: {map_id}")
+                else:
+                    self._log(f"⚠ Warning: map folder not found: {map_path}")
+
         self._log(f"\n✓ Campaign '{self.campaign_name}' created successfully!")
         self._log(f"  Location: {output_path}")
         self._log(f"  Missions: {len(self.missions)}")
