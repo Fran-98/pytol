@@ -23,7 +23,6 @@ from pytol.classes.mission_objects import (
 from pytol.classes.actions import GlobalValueActions
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
 from pytol.terrain.terrain_calculator import TerrainCalculator
-from pytol.classes.units import UNIT_CLASS_TO_ACTION_CLASS
 from pytol.misc.logger import create_logger
 from pytol.resources.resources import get_static_prefabs_database, load_json_data
 
@@ -245,12 +244,9 @@ class Mission:
         if map_path:
             self.map_path = map_path
             self.map_id = os.path.basename(map_path)
-        elif map_id and os.getenv('VTOL_VR_DIR'):
-            self.map_path = os.path.join(os.getenv('VTOL_VR_DIR'), "CustomMaps", map_id)
+        elif map_id and (vtol_directory or os.getenv('VTOL_VR_DIR')):
+            self.map_path = os.path.join(vtol_directory or os.getenv('VTOL_VR_DIR'), "CustomMaps", map_id)
             self.map_id = map_id
-        elif map_id and vtol_directory:
-                self.map_path = os.path.join(vtol_directory, "CustomMaps", map_id)
-                self.map_id = map_id
         else:
             raise ValueError("Map information could not be resolved.")
 
@@ -1225,7 +1221,9 @@ class Mission:
         uid = len(self.units) + 1  # Start IDs at 1 instead of 0
 
         # --- Attach Action Helper ---
-        ActionClass = UNIT_CLASS_TO_ACTION_CLASS.get(type(unit_obj))
+        from pytol.classes import actions as _actions
+        ActionClass = next((getattr(_actions, f"{c.__name__}Actions") for c in type(unit_obj).__mro__
+                            if hasattr(_actions, f"{c.__name__}Actions")), None)
         if ActionClass:
             # Pass the instance ID (uid) as the target_id for VTS events
             unit_obj.actions = ActionClass(target_id=uid)
@@ -1262,7 +1260,7 @@ class Mission:
                     self.logger.info(f"  > Smart placement result: {placement_type} at {final_pos[1]:.2f}m")
 
                     # Set editor mode based on type
-                    if placement_type in ['static_prefab_roof', 'city_roof', 'road', 'terrain']:
+                    if placement_type in ['static_prefab_roof', 'city_roof', 'road', 'bridge', 'terrain']:
                         editor_mode = "Ground"
 
                     # Override rotation if alignment is disabled for terrain/road
@@ -2025,7 +2023,9 @@ class Mission:
                 if field_name == 'equips' and not v:
                     continue  # no key = the AI keeps its prefab loadout (AIUnitSpawnEquippable)
                 if isinstance(v, (list, tuple)):
-                    v = "".join(f"{x};" for x in v)
+                    v = "".join(f"{self._resolve_link_id(x) if isinstance(x, (Waypoint, Path, Unit)) else x};" for x in v)
+                elif isinstance(v, (Waypoint, Path, Unit)):
+                    v = self._resolve_link_id(v)
                 fields_c += f"\t\t\t\t{_snake_to_camel(field_name)} = {_format_value(v)}{eol}"
 
             lines = [f"\t\tUnitSpawner{eol}\t\t{{{eol}",

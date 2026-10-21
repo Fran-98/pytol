@@ -2,30 +2,6 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Literal, get_origin, get_args
 import typing
 import re
-from pytol.classes.actions import (
-    AIAWACSSpawnActions,
-    AIAirTankerSpawnActions,
-    AIAircraftSpawnActions,
-    AICarrierSpawnActions,
-    AIDecoyLauncherSpawnActions,
-    AIDecoyRadarSpawnActions,
-    AIDroneCarrierSpawnActions,
-    AIFixedSAMSpawnActions,
-    AIGroundECMSpawnActions,
-    AIJTACSpawnActions,
-    AILockingRadarSpawnActions,
-    AIMissileSiloActions,
-    AISeaUnitSpawnActions,
-    AIUnitSpawnActions,
-    AIUnitSpawnEquippableActions,
-    APCUnitSpawnActions,
-    ArtilleryUnitSpawnActions,
-    GroundUnitSpawnActions,
-    IFVSpawnActions,
-    MultiplayerSpawnActions,
-    PlayerSpawnActions
-    
-)
 from ..misc.logger import create_logger
 from ..resources import resources as resource_utils
 import json
@@ -523,30 +499,6 @@ ID_TO_CLASS = {
     'T-55 AI': AIAircraftSpawn,
     'T-55 AI-E': AIAircraftSpawn,
     'WatchmanTruck': AILockingRadarSpawn,
-}
-
-UNIT_CLASS_TO_ACTION_CLASS = {
-    AIUnitSpawn: AIUnitSpawnActions,
-    AIUnitSpawnEquippable: AIUnitSpawnEquippableActions,
-    AIAircraftSpawn: AIAircraftSpawnActions,
-    AIAWACSSpawn: AIAWACSSpawnActions,
-    AIAirTankerSpawn: AIAirTankerSpawnActions,
-    GroundUnitSpawn: GroundUnitSpawnActions,
-    AIFixedSAMSpawn: AIFixedSAMSpawnActions,
-    AIGroundECMSpawn: AIGroundECMSpawnActions,
-    AIJTACSpawn: AIJTACSpawnActions,
-    AILockingRadarSpawn: AILockingRadarSpawnActions,
-    ArtilleryUnitSpawn: ArtilleryUnitSpawnActions,
-    APCUnitSpawn: APCUnitSpawnActions,
-    IFVSpawn: IFVSpawnActions,
-    AISeaUnitSpawn: AISeaUnitSpawnActions,
-    AICarrierSpawn: AICarrierSpawnActions,
-    AIDroneCarrierSpawn: AIDroneCarrierSpawnActions,
-    AIDecoyLauncherSpawn: AIDecoyLauncherSpawnActions,
-    AIDecoyRadarSpawn: AIDecoyRadarSpawnActions,
-    AIMissileSilo: AIMissileSiloActions,
-    PlayerSpawn: PlayerSpawnActions,
-    MultiplayerSpawn: MultiplayerSpawnActions,
 }
 
 def create_unit(id_name: str, unit_name: str, team: str, global_position: List[float], rotation: List[float], **kwargs) -> 'Unit':

@@ -13,7 +13,7 @@ from pytol.classes.conditionals import ConditionalTree, create_conditional
 from pytol.classes.actions import SystemActions, GlobalValueActions, ObjectiveActions
 from pytol.classes.mission_objects import (Trigger, Waypoint, GlobalValue, ConditionalAction,
                                            EventSequence, SequenceEvent)
-from tests.vts_validator import validate, parse_game
+from pytol.parsers.vts_validator import validate, parse_game
 
 
 @pytest.fixture(scope='module')

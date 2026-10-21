@@ -4,7 +4,7 @@ Checks a .vts the way VTOL VR loads it.
 `parse_game` mirrors ConfigNode.ParseNode: indentation is ignored and only the values written BEFORE the
 first child node of a block are read. `validate` reports anything the game would ignore or fail on.
 
-Run on files: python tests/vts_validator.py path/to/mission.vts [...]
+Run on files: python -m pytol.parsers.vts_validator path/to/mission.vts [...]
 """
 import sys
 
@@ -14,7 +14,6 @@ VT_EVENTS = load_json_data('vt_events.json')['classes']
 TARGET_CLASS = {'Objective': 'VTObjective', 'UnitGroup': 'VTUnitGroup', 'Timed_Events': 'VTTimedEventGroup',
                 'Trigger_Events': 'ScenarioTriggerEvents', 'Event_Sequences': 'VTSequencedEvent',
                 'System': 'VTScenario', 'Base': 'VTMapEdScenarioBasePrefab', 'Static_Object': 'VTSODestructible'}
-UNIT_CLASS_OF = {}
 
 
 def parse_game(text):
@@ -71,10 +70,22 @@ def _event(class_name, display):
     return None
 
 
+def _unit_classes(root):
+    """{unitInstanceID: first game class with events in the unit's hierarchy} from the UNITS block."""
+    from pytol.classes.units import ID_TO_CLASS
+    out = {}
+    for _, values, _ in next((c for c in root[2] if c[0] == 'UNITS'), ('', {}, []))[2]:
+        cls = ID_TO_CLASS.get(values.get('unitID'))
+        if cls:
+            out[int(values['unitInstanceID'])] = next((c.__name__ for c in cls.__mro__ if c.__name__ in VT_EVENTS), None)
+    return out
+
+
 def validate(text, unit_classes=None):
-    """List of problems. unit_classes: {unitInstanceID: C# class} to check unit actions (optional)."""
+    """List of problems. unit_classes ({unitInstanceID: game class}) is read from the file when omitted."""
     root, problems = parse_game(text)
     problems = list(problems)
+    unit_classes = unit_classes if unit_classes is not None else _unit_classes(root)
     _, top, _ = root
     for key in ('rtbWptID', 'refuelWptID'):
         v = top.get(key, '')
