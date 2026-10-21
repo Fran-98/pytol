@@ -4,8 +4,6 @@ generation using data from a TerrainCalculator instance.
 """
 import numpy as np
 import random
-import os
-import traceback
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
 from .terrain_calculator import TerrainCalculator
@@ -32,7 +30,6 @@ class MissionTerrainHelper:
         self.verbose = verbose if verbose is not None else terrain_calculator.verbose
         self.logger = create_logger(verbose=self.verbose, name="MissionTerrainHelper")
         self._bridges = None
-        self._pois_cache = None
         # Get map size for scale-aware calculations
         self.map_size = getattr(terrain_calculator, 'total_map_size_meters', 196608.0)
         self._log("MissionTerrainHelper initialized.")
@@ -230,35 +227,15 @@ class MissionTerrainHelper:
     
     def has_line_of_sight(self, pos1, pos2, steps=20, terrain_offset=0):
         """
-        Checks for clear line of sight between two 3D points, accounting for terrain.
+        True if the straight line between two (x, y, z) points stays above the terrain (buildings ignored).
 
-        Args:
-            pos1 (tuple): The 3D coordinate (x, y, z) of the starting point.
-            pos2 (tuple): The 3D coordinate (x, y, z) of the ending point.
-            steps (int): The number of points to check along the line. Higher is more accurate.
-            terrain_offset (float): An optional vertical buffer. For example, use 2 for a person's height.
-
-        Returns:
-            bool: True if there is clear line of sight, False if it is obstructed.
+        Samples at least every 50 m (heightmap pixels are ~150 m), so long sight lines don't skip ridges.
         """
-        p1, p2 = np.array(pos1), np.array(pos2)
-        
-        # Check that both endpoints are above terrain
-        terrain_h1 = self.tc.get_terrain_height(p1[0], p1[2])
-        terrain_h2 = self.tc.get_terrain_height(p2[0], p2[2])
-        if p1[1] < (terrain_h1 + terrain_offset) or p2[1] < (terrain_h2 + terrain_offset):
-            return False
-        
-        # Check intermediate points along the line
-        for i in range(1, steps + 1):
-            t = i / float(steps + 1)  # Use steps+1 to check points between start and end
-            # Linear interpolation: p = (1-t)*p1 + t*p2
-            interp_point = p1 + t * (p2 - p1)
-            terrain_h = self.tc.get_terrain_height(interp_point[0], interp_point[2])
-            if terrain_h is not None and interp_point[1] < (terrain_h + terrain_offset):
-                return False # Obstructed by terrain
-        return True
-    
+        p1, p2 = np.asarray(pos1, dtype=float), np.asarray(pos2, dtype=float)
+        n = max(steps, int(np.linalg.norm(p2 - p1) / 50.0))
+        pts = p1 + np.linspace(0, 1, n + 2)[:, None] * (p2 - p1)
+        return bool(np.all(pts[:, 1] >= self.tc.get_terrain_height(pts[:, 0], pts[:, 2]) + terrain_offset))
+
     def find_observation_post(self, target_area, min_dist, max_dist, num_candidates=20, 
                              constraint_area=None, excluded_areas=None, position_validator=None,
                              existing_unit_positions=None, min_spacing_from_units=None):
@@ -470,166 +447,40 @@ class MissionTerrainHelper:
     
     # --- Road & Convoy Helpers ---
 
-    def get_nearest_road_point(self, world_x, world_z):
+    def get_nearest_road_point(self, world_x, world_z, max_distance=None):
         """
-        Finds the closest point on any road segment to the given world coordinates.
-
-        Args:
-            world_x: The world X coordinate.
-            world_z: The world Z coordinate.
-
-        Returns:
-            A dictionary with {'position': (x, y, z), 'segment_index': int, 'distance': float}
-            or None if no roads exist on the map.
+        Closest road point: {'position': (x, y, z), 'segment_index', 'distance', 'road_id', 'is_bridge'},
+        or None if the map has no roads or the road is farther than max_distance.
         """
-        if not self.tc.road_segments:
+        hit = self.tc.nearest_road(world_x, world_z)
+        if hit and max_distance is not None and hit['distance'] > max_distance:
             return None
+        return hit
 
-        point_2d = np.array([world_x, world_z])
-        min_dist_sq = float('inf')
-        best_point_3d = None
-        best_segment_index = -1
-
-        for i, seg in enumerate(self.tc.road_segments):
-            start_3d, end_3d = seg['start'], seg['end']
-            p1 = np.array([start_3d[0], start_3d[2]])
-            p2 = np.array([end_3d[0], end_3d[2]])
-            
-            line_vec = p2 - p1
-            point_vec = point_2d - p1
-            line_len_sq = np.dot(line_vec, line_vec)
-            
-            if line_len_sq == 0.0: 
-                continue
-
-            t = np.dot(point_vec, line_vec) / line_len_sq
-            t = np.clip(t, 0, 1)
-            
-            closest_point_2d = p1 + t * line_vec
-            dist_sq = np.sum((point_2d - closest_point_2d)**2)
-
-            if dist_sq < min_dist_sq:
-                min_dist_sq = dist_sq
-                height = self.tc.get_terrain_height(closest_point_2d[0], closest_point_2d[1])
-                best_point_3d = (closest_point_2d[0], height, closest_point_2d[1])
-                best_segment_index = i
-
-        if best_point_3d:
-            return {
-                'position': best_point_3d,
-                'segment_index': best_segment_index,
-                'distance': np.sqrt(min_dist_sq)
-            }
-        return None
-
-    def get_road_path(self, start_pos, end_pos, max_segments=100):
-        """
-        Generates a sequence of road points from a start to an end position.
-        Note: This is a simplified greedy search, not a full A* pathfinder.
-
-        Args:
-            start_pos: An (x, z) tuple for the start.
-            end_pos: An (x, z) tuple for the end.
-            max_segments: A safe limit to prevent infinite loops.
-
-        Returns:
-            A list of (x, y, z) waypoints following the road network.
-        """
-        start_road_info = self.get_nearest_road_point(start_pos[0], start_pos[1])
-        end_road_info = self.get_nearest_road_point(end_pos[0], end_pos[1])
-
-        if not start_road_info or not end_road_info:
-            return []
-
-        path_points = [start_road_info['position']]
-        current_seg_index = start_road_info['segment_index']
-        visited_indices = {current_seg_index}
-
-        for _ in range(max_segments):
-            if current_seg_index == end_road_info['segment_index']:
-                break
-
-            current_seg_data = self.tc.road_segments[current_seg_index]
-            current_seg_start, current_seg_end = current_seg_data['start'], current_seg_data['end']
-            
-            best_next_seg = -1
-            min_dist_to_target = float('inf')
-
-            end_point_2d = np.array([current_seg_end[0], current_seg_end[2]])
-
-            for i, next_seg in enumerate(self.tc.road_segments):
-                if i in visited_indices:
-                    continue
-                
-                next_start, next_end = next_seg['start'], next_seg['end']
-                
-                if np.linalg.norm(end_point_2d - np.array([next_start[0], next_start[2]])) < 20.0:
-                    dist_to_end = np.linalg.norm(np.array([next_end[0], next_end[2]]) - np.array([end_pos[0], end_pos[1]]))
-                    if dist_to_end < min_dist_to_target:
-                        min_dist_to_target = dist_to_end
-                        best_next_seg = i
-            
-            if best_next_seg != -1:
-                next_start_pos = self.tc.road_segments[best_next_seg]['start']
-                height = self.tc.get_terrain_height(next_start_pos[0], next_start_pos[2])
-                path_points.append((next_start_pos[0], height, next_start_pos[2]))
-                current_seg_index = best_next_seg
-                visited_indices.add(current_seg_index)
-            else:
-                break
-
-        path_points.append(end_road_info['position'])
-        return path_points
+    def get_road_path(self, start_pos, end_pos, max_segments=None):
+        """Shortest road route between two (x, z) points as (x, y, z) points ([] if they are not connected)."""
+        return self.tc.get_road_route(start_pos, end_pos)
 
     #region Structure & Target Finding
 
     def get_buildings_in_area(self, center_x, center_z, radius, spawnable_only=False):
-        """
-        Finds all city blocks and static prefabs within a given radius.
-
-        Args:
-            center_x: The center X coordinate of the search area.
-            center_z: The center Z coordinate of the search area.
-            radius: The radius of the search area in meters.
-            spawnable_only: If True, only returns spawnable surfaces.
-
-        Returns:
-            A list of dictionaries, each representing a found building.
-        """
-        found_buildings = []
-        radius_sq = radius**2
-        
-        # 1. Check City Blocks
+        """City blocks and static prefab instances whose position is within radius (XZ)."""
+        found = []
+        r2 = radius ** 2
         for block in self.tc.city_blocks:
             pos = block['world_position']
-            dist_sq = (pos[0] - center_x)**2 + (pos[2] - center_z)**2
-            if dist_sq <= radius_sq:
-                found_buildings.append({
-                    'type': 'city_block', 'position': pos,
-                    'prefab_id': block['layout_guid'], 'is_spawnable': True
-                })
-        
-        # 2. Check Static Prefabs
-        processed_prefabs = set()
-        for surface in self.tc.static_surfaces:
-            if spawnable_only and not surface.get('is_spawnable', False):
+            if (pos[0] - center_x) ** 2 + (pos[2] - center_z) ** 2 <= r2:
+                found.append({'type': 'city_block', 'position': pos, 'prefab_id': block['layout_guid'],
+                              'pixel_coord': block['pixel_coord'], 'is_spawnable': True})
+        spawnable = {s['prefab_index'] for s in self.tc.static_surfaces if s['is_spawnable']}
+        for idx, p in enumerate(self.tc.get_all_static_prefabs()):
+            pos = p['position']
+            if (pos[0] - center_x) ** 2 + (pos[2] - center_z) ** 2 > r2:
                 continue
-            bounds = surface['world_bounds']
-            s_center_x = (bounds[0] + bounds[3]) / 2.0
-            s_center_z = (bounds[2] + bounds[5]) / 2.0
-            dist_sq = (s_center_x - center_x)**2 + (s_center_z - center_z)**2
-            if dist_sq <= radius_sq:
-                prefab_name = surface['prefab_name']
-                if prefab_name not in processed_prefabs:
-                    for p in self.tc.get_all_static_prefabs():
-                        if p['prefab_id'] == prefab_name:
-                             found_buildings.append({
-                                'type': 'static_prefab', 'position': tuple(p['position']),
-                                'prefab_id': prefab_name, 'is_spawnable': surface.get('is_spawnable', False)
-                            })
-                             processed_prefabs.add(prefab_name)
-                             break
-        return found_buildings
+            if idx in spawnable or not spawnable_only:
+                found.append({'type': 'static_prefab', 'position': tuple(pos), 'prefab_id': p['prefab_id'],
+                              'prefab_index': idx, 'is_spawnable': idx in spawnable})
+        return found
 
     def find_city_with_statics(self, required_prefab_ids, search_all=True):
         """
@@ -1191,62 +1042,26 @@ class MissionTerrainHelper:
 
     def find_bridge_crossing_path(self, start_pos, end_pos):
         """
-        Generates a road path between two points that explicitly uses a bridge.
-
-        Why it's useful: Ensures ground units can cross canyons or rivers, making pathfinding much more robust.
-
-        How it works (Logic):
-        1. First, it finds all static prefabs identified as bridges.
-        2. It selects the bridge whose center is closest to the straight line between start and end.
-        3. It generates three sub-paths using `get_road_path`:
-           - `start_pos` -> `bridge_start`
-           - `bridge_end` -> `end_pos`
-        4. It stitches these paths together with the bridge's own segment.
-
-        Args:
-            start_pos (tuple): The (x, z) start coordinate.
-            end_pos (tuple): The (x, z) end coordinate.
-
-        Returns:
-            list: A list of (x, y, z) waypoints forming the complete path, or None if no suitable bridge is found.
+        Road route from start to end (x, z) forced through the bridge closest to the straight line between them.
+        Bridge points keep the deck height. Returns (x, y, z) points or None.
         """
         bridges = self._find_all_bridges()
         if not bridges:
             return None
+        a, b = np.asarray(start_pos, dtype=float), np.asarray(end_pos, dtype=float)
 
-        mid_point = (np.array(start_pos) + np.array(end_pos)) / 2.0
-        # Find the best bridge by its segment's midpoint
-        best_bridge = min(bridges, key=lambda b: np.linalg.norm(((b['start'] + b['end']) / 2)[:2] - mid_point))
-        
-        bridge_start_2d = np.array([best_bridge['start'][0], best_bridge['start'][2]])
-        bridge_end_2d = np.array([best_bridge['end'][0], best_bridge['end'][2]])
+        def dist_to_line(bridge):
+            m = ((bridge['start'] + bridge['end']) / 2.0)[[0, 2]]
+            t = np.clip(np.dot(m - a, b - a) / max(np.dot(b - a, b - a), 1e-9), 0, 1)
+            return np.linalg.norm(a + t * (b - a) - m)
 
-        start_dist_to_b_start = np.linalg.norm(np.array(start_pos) - bridge_start_2d)
-        start_dist_to_b_end = np.linalg.norm(np.array(start_pos) - bridge_end_2d)
-
-        # Determine which end of the bridge is the entry and which is the exit
-        bridge_entry_2d, bridge_exit_2d = (bridge_start_2d, bridge_end_2d) if start_dist_to_b_start < start_dist_to_b_end else (bridge_end_2d, bridge_start_2d)
-
-        path1 = self.get_road_path(start_pos, tuple(bridge_entry_2d))
-        path2 = self.get_road_path(tuple(bridge_exit_2d), end_pos)
-
+        best = min(bridges, key=dist_to_line)
+        mid = ((best['start'] + best['end']) / 2.0)[[0, 2]]
+        path1, path2 = self.tc.get_road_route(tuple(a), tuple(mid)), self.tc.get_road_route(tuple(mid), tuple(b))
         if not path1 or not path2:
             return None
+        return path1 + path2[1:]
 
-        full_path = path1
-        # Reconstruct 3D positions with correct height for the bridge segment
-        bridge_start_pos = (bridge_entry_2d[0], self.tc.get_terrain_height(bridge_entry_2d[0], bridge_entry_2d[1]), bridge_entry_2d[1])
-        bridge_end_pos = (bridge_exit_2d[0], self.tc.get_terrain_height(bridge_exit_2d[0], bridge_exit_2d[1]), bridge_exit_2d[1])
-        
-        # Avoid duplicating the last point of path1 if it's the same as the bridge start
-        if not full_path or np.linalg.norm(np.array(full_path[-1]) - np.array(bridge_start_pos)) > 1.0:
-            full_path.append(bridge_start_pos)
-        full_path.append(bridge_end_pos)
-        
-        full_path.extend(path2)
-        
-        return full_path
-    
     #region Air & Naval Operations
 
     def find_helicopter_battle_position(self, target_area, search_radius, min_dist=500, pop_up_alt=30):
@@ -1654,32 +1469,24 @@ class MissionTerrainHelper:
         return points
         
     def get_building_garrison_points(self, building_info, max_units=10):
-        """
-        Finds all available spawnable roof surfaces on a building to place infantry.
+        """Centers of the spawnable roofs of a building from get_buildings_in_area, highest first."""
+        tops = []
+        if building_info['type'] == 'city_block':
+            layout = self.tc._city_layout_at_pixel(*building_info['pixel_coord'])
+            pivot = np.asarray(building_info['position'])
+            rot = R.from_euler('Y', layout['block_yaw_degrees'], degrees=True).as_matrix()
+            for srf in layout['surfaces']:
+                b = srf.get('bounds_rel_layout', [])
+                if srf.get('is_spawnable') and len(b) == 6:
+                    tops.append(tuple(float(v) for v in rot @ np.array([(b[0] + b[1]) / 2, b[3], (b[4] + b[5]) / 2]) + pivot))
+        else:
+            for srf in self.tc.static_surfaces:
+                w = srf['world_bounds']
+                if srf['is_spawnable'] and srf['prefab_index'] == building_info['prefab_index']:
+                    tops.append(((w[0] + w[3]) / 2, w[4], (w[2] + w[5]) / 2))
+        tops.sort(key=lambda p: -p[1])
+        return tops[:max_units]
 
-        Why it's useful: Allows you to quickly and automatically garrison a building with units.
-
-        How it works (Logic):
-        1. Takes `building_info` (from `get_buildings_in_area`).
-        2. If it's a static prefab, it iterates through all its surfaces in the database, returning the center of spawnable ones.
-        3. If it's a city block, it does the same for the city layout database.
-
-        Args:
-            building_info (dict): A dictionary representing a single building.
-            max_units (int): The maximum number of points to return.
-
-        Returns:
-            list: A list of (x, y, z) positions on the building's rooftops.
-        """
-        garrison_points = []
-        # This requires more detailed info from TerrainCalculator that is not exposed.
-        # This is a conceptual implementation. A real one would need tc.get_surfaces_for_prefab().
-        self._log("NOTE: get_building_garrison_points is a conceptual placeholder.")
-        # Dummy implementation: returns a point slightly above the building center.
-        pos = building_info['position']
-        garrison_points.append((pos[0], pos[1] + 20, pos[2]))
-        return garrison_points[:max_units]
-        
     def find_open_area(self, center_pos, search_radius, min_clear_radius,
                        constraint_area=None, excluded_areas=None, position_validator=None,
                        existing_unit_positions=None, min_spacing_from_units=None):
@@ -1849,157 +1656,6 @@ class MissionTerrainHelper:
             return random.sample(objectives, num_locations)
         return objectives
 
-    def generate_downed_pilot_scenario(self, search_area_center, search_radius):
-        """
-        Generates a set of linked locations for a Combat Search and Rescue (CSAR) mission.
-
-        Why it's useful: Instantly sets up the entire geographic layout for a CSAR mission with one call.
-
-        How it works (Logic):
-        1. Finds a difficult-to-access crash site (low flatness, not near roads).
-        2. Searches nearby for a suitable flat "Rescue LZ".
-        3. Finds a spawn point on the nearest road for an "Enemy Patrol".
-
-        Args:
-            search_area_center (tuple): (x, z) center of the area to generate the scenario in.
-            search_radius (float): Radius to search within.
-
-        Returns:
-            dict: A dictionary with 'crash_site', 'rescue_lz', and 'enemy_patrol_spawn', or None.
-        """
-        # 1. Find a crash site
-        crash_site = None
-        for _ in range(50):
-            pos = self.get_random_points_in_area(search_area_center, search_radius, 1)[0]
-            # Prefer rough, remote terrain
-            if self.get_terrain_type((pos[0], pos[2])) in ["Mountainous", "Rolling Hills"]:
-                road_info = self.get_nearest_road_point(pos[0], pos[2])
-                if road_info and road_info['distance'] > 500: # At least 500m from a road
-                    crash_site = pos
-                    break
-        if not crash_site: 
-            return None
-
-        # 2. Find a nearby LZ
-        lcs = self.find_flat_landing_zones(crash_site[0], crash_site[2], 2000, 20)
-        lz = min(lcs, key=lambda p: np.linalg.norm(np.array(p) - np.array(crash_site)), default=None)
-        if not lz: 
-            return None
-
-        # 3. Find enemy patrol spawn
-        patrol_spawn_info = self.get_nearest_road_point(crash_site[0], crash_site[2])
-        if not patrol_spawn_info: 
-            return None
-        
-        return {'crash_site': crash_site, 'rescue_lz': lz, 'enemy_patrol_spawn': patrol_spawn_info['position']}
-
-    def generate_base_defense_positions(self, base_center, num_positions, min_dist=500, max_dist=2000):
-        """
-        Intelligently places defensive units on surrounding high ground and choke points.
-
-        Why it's useful: Automates the setup of a tactically sound defensive perimeter.
-
-        How it works (Logic):
-        1. It calls `find_observation_post` in a 360-degree arc around the base to find overwatch positions.
-        2. It finds all major roads leading to the base and uses `find_choke_point` on them to place roadblocks.
-        3. It returns a mix of these overwatch and checkpoint positions.
-
-        Args:
-            base_center (tuple): The (x, y, z) position of the base to defend.
-            num_positions (int): The number of defensive positions to generate.
-            min_dist (float): Minimum distance from the base for a position.
-            max_dist (float): Maximum distance from the base.
-
-        Returns:
-            list: A list of (x, y, z) tuples for defensive units.
-        """
-        positions = []
-        # Find overwatch positions
-        for _ in range(num_positions):
-            op = self.find_observation_post(base_center, min_dist, max_dist)
-            if op:
-                positions.append(op)
-        return positions # Simplified for now, road chokepoints can be added
-
-    def generate_convoy_ambush_scenario(self, convoy_path):
-        """
-        Finds the best ambush spot on a path and places enemy forces accordingly.
-
-        Why it's useful: Creates a complete, intelligent ambush scenario with a single function call.
-
-        How it works (Logic):
-        1. Uses `analyze_route_vulnerability` to find the best choke point on the path.
-        2. Calls `find_hidden_position` from the ridges overlooking the choke point to place ambush units.
-        3. Defines an ingress/egress route for the ambush force.
-
-        Args:
-            convoy_path (list): The list of (x, y, z) waypoints for the convoy.
-
-        Returns:
-            dict: With keys 'ambush_point', 'attacker_positions', or None.
-        """
-        vuln = self.analyze_route_vulnerability(convoy_path)
-        if not vuln or not vuln['choke_points']:
-            return None
-        
-        ambush_point = vuln['choke_points'][0]
-        
-        # Find positions on the high ground nearby
-        attacker_positions = []
-        for _ in range(5): # Find 5 attacker positions
-            # Search for hidden spots on the hills around the ambush point
-            pos = self.find_hidden_position(ambush_point, (ambush_point[0], ambush_point[2]), 400)
-            if pos:
-                # Make sure it's actually higher than the road
-                if pos[1] > ambush_point[1] + 10:
-                    attacker_positions.append(pos)
-        
-        return {'ambush_point': ambush_point, 'attacker_positions': attacker_positions}
-
-    def generate_reconnaissance_flight_path(self, num_points=5, altitude_agl=500):
-        """
-        Creates a logical flight path that tours the map's most interesting locations.
-
-        Why it's useful: Procedurally generates an interesting reconnaissance or patrol mission.
-
-        How it works (Logic):
-        1. Calls `suggest_objective_locations` to get a list of points of interest.
-        2. Orders them by proximity to create a logical tour (nearest neighbor path).
-        3. Connects each point with `get_terrain_following_path`.
-
-        Args:
-            num_points (int): The number of points of interest to visit.
-            altitude_agl (float): The desired altitude above ground for the flight.
-
-        Returns:
-            list: A list of (x, y, z) waypoints for the full recon path.
-        """
-        pois = self.suggest_objective_locations(num_points)
-        if not pois or len(pois) < 2: 
-            return []
-        
-        # Simple nearest neighbor sort to create a tour
-        path_order = []
-        remaining = pois[:]
-        current = remaining.pop(0)
-        path_order.append(current)
-
-        while remaining:
-            next_one = min(remaining, key=lambda p: np.linalg.norm(np.array(p['position']) - np.array(current['position'])))
-            path_order.append(next_one)
-            remaining.remove(next_one)
-            current = next_one
-        
-        # Generate the full flight path
-        full_path = []
-        for i, _ in enumerate(path_order[:-1]):
-            start_pos = (path_order[i]['position'][0], path_order[i]['position'][2])
-            end_pos = (path_order[i+1]['position'][0], path_order[i+1]['position'][2])
-            segment = self.get_terrain_following_path(start_pos, end_pos, 20, altitude_agl)
-            full_path.extend(segment)
-            
-        return full_path
-
     def find_coastal_landing_area(self, search_area_center, search_radius, min_area_radius=50, sea_level=1.0):
         """
         Finds a flat beach area suitable for an amphibious assault.
@@ -2077,102 +1733,6 @@ class MissionTerrainHelper:
         return random.sample(control_points, min(num_points, len(control_points)))
     
     #region VIII. High-Level Mission Composition & Flavor
-
-    def create_mission_flow(self, start_location_name, objective_type, target_location_name):
-        """
-        Generates a logical geographic sequence of waypoints for a complete mission.
-        (Refined Logic)
-        """
-        if self._pois_cache is None:
-            # Prime the cache by calling the function that populates it
-            self.get_procedural_location_name((0,0,0)) 
-
-        start_obj = next((o for o in self._pois_cache if o['name'] == start_location_name), None)
-        target_obj = next((o for o in self._pois_cache if o['name'] == target_location_name), None)
-
-        if not start_obj or not target_obj: 
-            return None
-        start_pos, target_pos = start_obj['position'], target_obj['position']
-        
-        # --- REFINED STAGING LOGIC ---
-        if objective_type.upper() == 'CAS': # Close Air Support needs line of sight
-            staging_pos = self.find_observation_post(target_pos, min_dist=4000, max_dist=8000)
-        else: # Default to hidden for STRIKE, etc.
-            staging_pos = self.find_artillery_position(target_pos, search_radius=8000, standoff_dist=4000)
-        if not staging_pos: 
-            staging_pos = start_pos # Fallback
-
-        # --- REFINED EGRESS LOGIC ---
-        # Find the safest map edge to egress towards (away from center)
-        map_center = self.tc.total_map_size_meters / 2.0
-        egress_target = np.array([target_pos[0], target_pos[2]])
-        map_corners = [np.array([0,0]), np.array([map_center*2, 0]), np.array([0, map_center*2]), np.array([map_center*2, map_center*2])]
-        safest_corner = min(map_corners, key=lambda c: -np.linalg.norm(c - egress_target)) # Furthest corner
-        
-        egress_vec = safest_corner - egress_target
-        norm = np.linalg.norm(egress_vec)
-        if norm > 0: 
-            egress_vec /= norm
-        egress_pos = np.array(target_pos) + np.array([egress_vec[0], 0, egress_vec[1]]) * 15000 # 15km away
-        egress_pos = (egress_pos[0], egress_pos[1], egress_pos[2])
-
-        return {'start': start_pos, 'staging': staging_pos, 'target': target_pos, 'egress': egress_pos}
-
-    def get_procedural_location_name(self, position):
-        """
-        Gives a descriptive, procedural name to a location based on its characteristics.
-        """
-        if self._pois_cache is None:
-            # This is where the cache is populated
-            self._pois_cache = self.suggest_objective_locations(100)
-
-        for poi in self._pois_cache:
-            if np.linalg.norm(np.array(position) - np.array(poi['position'])) < 3000:
-                return f"vicinity of {poi['name']}"
-
-        map_center = self.tc.total_map_size_meters / 2.0
-        terrain = self.get_terrain_type((position[0], position[2]))
-        
-        direction = ""
-        if position[2] > map_center * 1.3: 
-            direction += "Northern "
-        elif position[2] < map_center * 0.7: 
-            direction += "Southern "
-        if position[0] > map_center * 1.3: 
-            direction += "Eastern "
-        elif position[0] < map_center * 0.7: 
-            direction += "Western "
-        
-        return f"{direction}{terrain}"
-
-    def get_map_briefing_data(self):
-        """
-        Generates a text summary of the map's key features for mission briefings.
-
-        Why it's useful: Can be used to procedurally generate immersive mission briefing text.
-
-        How it works (Logic):
-        1. Calls `suggest_objective_locations` to get all major POIs.
-        2. Categorizes them by name (e.g., 'airbase', 'city').
-        3. Finds the most prominent terrain feature (e.g., the highest mountain).
-        
-        Returns:
-            dict: A summary dictionary, e.g., {'cities': 2, 'airbases': 1, 'landmarks': ['Mount Kaylar']}.
-        """
-        if self._pois_cache is None: 
-            self.get_procedural_location_name((0,0,0))
-        
-        summary = {'cities': 0, 'airbases': 0, 'landmarks': []}
-        for poi in self._pois_cache:
-            name = poi['name'].lower()
-            if 'city' in name: 
-                summary['cities'] += 1
-            elif 'airbase' in name: 
-                summary['airbases'] += 1
-            elif 'peak' in name: 
-                summary['landmarks'].append(poi['name'])
-        
-        return summary
 
     def validate_mission_feasibility(self, unit_list, max_slope_deg=30):
         """
@@ -2290,9 +1850,7 @@ class MissionTerrainHelper:
         road_crossings = 0
         center = np.array(area_center)
         radius_sq = radius**2
-        # --- FIX: Iterate over list of dictionaries ---
-        for seg in self.tc.road_segments:
-            start, end = seg['start'], seg['end']
+        for start, end in self.tc.road_segments:
             s_2d, e_2d = np.array([start[0], start[2]]), np.array([end[0], end[2]])
             s_inside = np.sum((s_2d - center)**2) < radius_sq
             e_inside = np.sum((e_2d - center)**2) < radius_sq
@@ -2331,200 +1889,6 @@ class MissionTerrainHelper:
         return visibility_graph
     
 
-if __name__ == "__main__":
-    # --- SETUP ---
-    MAP_FOLDER = r"test_map/hMap2"
-    LAYOUT_DB_PATH = 'Resources/city_layouts_database.json'
-    INDIVIDUAL_DB_PATH = 'Resources/individual_prefabs_database.json'
-
-    if not os.path.exists(MAP_FOLDER):
-        print(f"Error: Map folder not found at '{MAP_FOLDER}'")
-        print("Please ensure the test map is available to run this test script.")
-    else:
-        try:
-            print("--- Initializing TerrainCalculator & MissionTerrainHelper ---")
-            calculator = TerrainCalculator(MAP_FOLDER, LAYOUT_DB_PATH, INDIVIDUAL_DB_PATH)
-            mission_helper = MissionTerrainHelper(calculator)
-            print("-" * 50)
-
-            # --- DATA FOR TESTING based on hMap2---
-            # Use realistic coordinates based on a large map size
-            map_center_x, map_center_z = calculator.total_map_size_meters / 2, calculator.total_map_size_meters / 2
-            
-            # A known city-like area for targeted tests
-            city_pos = (57036.29, calculator.get_terrain_height(57036.29, 115526.57), 115526.57)
-            
-            # A known mountainous area
-            mountain_pos = mission_helper.find_highest_point_in_area(54406.57, 110333.51, 10000)
-            if not mountain_pos: 
-                mountain_pos = (map_center_x + 50000, 1500, map_center_z + 50000) # Fallback
-
-            # A known coastal area (assuming sea level is low)
-            coastal_pos = (1000, 5, map_center_z)
-
-
-            # --- CATEGORY I: Core Terrain & Object Queries ---
-            print("\n--- CATEGORY I: Core Terrain & Object Queries ---")
-            print("1.1 Testing has_line_of_sight...")
-            los_result = mission_helper.has_line_of_sight(city_pos, (mountain_pos[0], mountain_pos[1] + 20, mountain_pos[2]))
-            print(f"  -> LoS from city to mountain peak: {los_result}")
-            
-            print("\n1.2 Testing find_hidden_position...")
-            hidden_pos = mission_helper.find_hidden_position(mountain_pos, (city_pos[0], city_pos[2]), 2000)
-            print(f"  -> Found hidden position near city: {hidden_pos is not None}")
-
-
-            # --- CATEGORY II: Strategic Area Analysis & Placement ---
-            print("\n--- CATEGORY II: Strategic Area Analysis & Placement ---")
-            print("2.1 Testing find_observation_post...")
-            op = mission_helper.find_observation_post(city_pos, 3000, 6000)
-            print(f"  -> Found observation post: {op is not None}")
-
-            print("\n2.2 Testing find_artillery_position...")
-            artillery_pos = mission_helper.find_artillery_position(city_pos, 8000, 4000)
-            print(f"  -> Found artillery position: {artillery_pos is not None}")
-            
-            print("\n2.3 Testing get_terrain_type...")
-            print(f"  -> Terrain type at city: '{mission_helper.get_terrain_type((city_pos[0], city_pos[2]))}'")
-            print(f"  -> Terrain type at mountain: '{mission_helper.get_terrain_type((mountain_pos[0], mountain_pos[2]))}'")
-            
-            # This test requires a valid road path first
-            road_path_for_choke = mission_helper.get_road_path((map_center_x, map_center_z), (mountain_pos[0], mountain_pos[2]))
-            if road_path_for_choke:
-                print("\n2.4 Testing find_choke_point...")
-                choke = mission_helper.find_choke_point(road_path_for_choke)
-                print(f"  -> Found choke point on path: {choke is not None}")
-
-
-            # --- CATEGORY III: Advanced Pathfinding & Movement ---
-            print("\n--- CATEGORY III: Advanced Pathfinding & Movement ---")
-            # We already have a road path test in the previous section
-            print("3.1 Testing get_convoy_dispersal_points...")
-            road_info = mission_helper.get_nearest_road_point(city_pos[0], city_pos[2])
-            if road_info:
-                dispersal_pts = mission_helper.get_convoy_dispersal_points(road_info['position'], 4, 500)
-                print(f"  -> Found {len(dispersal_pts)} dispersal points.")
-            
-            print("\n3.2 Testing find_riverbed_path...")
-            river_path = mission_helper.find_riverbed_path((map_center_x, map_center_z), (mountain_pos[0], mountain_pos[2]))
-            print(f"  -> Generated riverbed path with {len(river_path)} points.")
-
-            # print("\n3.3 Testing find_bridge_crossing_path...")
-            # bridge_path = mission_helper.find_bridge_crossing_path((map_center_x - 20000, map_center_z), (map_center_x + 20000, map_center_z))
-            # print(f"  -> Found bridge path: {bridge_path is not None}")
-            
-
-            # --- CATEGORY IV: Air & Naval Operations ---
-            print("\n--- CATEGORY IV: Air & Naval Operations ---")
-            print("4.1 Testing find_helicopter_battle_position...")
-            heli_pos = mission_helper.find_helicopter_battle_position(city_pos, 5000)
-            print(f"  -> Found helicopter hide position: {heli_pos is not None}")
-
-            print("\n4.2 Testing generate_bombing_run_path...")
-            bomb_run = mission_helper.generate_bombing_run_path(city_pos, 180)
-            print(f"  -> Generated bombing run IP: {bomb_run['ip']}")
-
-            print("\n4.3 Testing define_safe_air_corridor...")
-            corridor = mission_helper.define_safe_air_corridor((10000, 10000), (map_center_x, map_center_z), 5000, 3000, [mountain_pos])
-            print(f"  -> Safe corridor score: {corridor['safety_score']:.2f}")
-
-            print("\n4.4 Testing find_naval_bombardment_position...")
-            naval_pos = mission_helper.find_naval_bombardment_position(coastal_pos, 5000)
-            print(f"  -> Found naval bombardment position: {naval_pos is not None}")
-
-
-            # --- CATEGORY V: Dynamic Campaign & Intelligence ---
-            print("\n--- CATEGORY V: Dynamic Campaign & Intelligence ---")
-            friendly_units = [(map_center_x - 5000, 100, map_center_z), (map_center_x - 6000, 100, map_center_z + 1000)]
-            enemy_units = [(map_center_x + 5000, 100, map_center_z), (map_center_x + 6000, 100, map_center_z - 1000)]
-            print("5.1 Testing calculate_front_line_trace...")
-            front_line = mission_helper.calculate_front_line_trace(friendly_units, enemy_units)
-            print(f"  -> Generated {len(front_line)} front line points.")
-
-            print("\n5.2 Testing analyze_route_vulnerability...")
-            vuln = mission_helper.analyze_route_vulnerability(road_path_for_choke)
-            print(f"  -> Found {len(vuln.get('bridges',[]))} bridges and {len(vuln.get('choke_points',[]))} choke points on route.")
-
-            print("\n5.3 Testing find_radar_dead_zone...")
-            dead_zones = mission_helper.find_radar_dead_zone([mountain_pos], (city_pos[0], city_pos[2]), 10000, city_pos[1] + 150)
-            print(f"  -> Found {len(dead_zones)} points in radar dead zones.")
-
-
-            # --- CATEGORY VI: Formations & Unit Placement ---
-            print("\n--- CATEGORY VI: Formations & Unit Placement ---")
-            print("6.1 Testing get_line_formation_points...")
-            line = mission_helper.get_line_formation_points(city_pos, 5, 100, 90)
-            print(f"  -> Generated {len(line)} points for line formation.")
-
-            print("\n6.2 Testing get_wedge_formation_points...")
-            wedge = mission_helper.get_wedge_formation_points(city_pos, 5, 100, 0)
-            print(f"  -> Generated {len(wedge)} points for wedge formation.")
-
-            print("\n6.3 Testing find_open_area...")
-            open_area = mission_helper.find_open_area((city_pos[0], city_pos[2]), 10000, 500)
-            print(f"  -> Found open area: {open_area is not None}")
-
-
-            # --- CATEGORY VII: Scenario & Storytelling Primitives ---
-            print("\n--- CATEGORY VII: Scenario & Storytelling Primitives ---")
-            print("7.1 Testing suggest_objective_locations...")
-            objectives = mission_helper.suggest_objective_locations(3)
-            print(f"  -> Suggested {len(objectives)} objective locations.")
-            if objectives:
-                print(f"     - Example: {objectives[0]['name']}")
-
-            print("\n7.2 Testing generate_downed_pilot_scenario...")
-            csar = mission_helper.generate_downed_pilot_scenario((mountain_pos[0], mountain_pos[2]), 10000)
-            print(f"  -> Generated CSAR scenario: {csar is not None}")
-
-            print("\n7.3 Testing generate_base_defense_positions...")
-            def_pos = mission_helper.generate_base_defense_positions(city_pos, 4)
-            print(f"  -> Generated {len(def_pos)} base defense positions.")
-            
-            print("\n7.4 Testing find_coastal_landing_area...")
-            landing_area = mission_helper.find_coastal_landing_area((coastal_pos[0], coastal_pos[2]), 5000)
-            print(f"  -> Found coastal landing area: {landing_area is not None}")
-
-
-            # --- CATEGORY VIII: High-Level Mission Composition & Flavor ---
-            print("\n--- CATEGORY VIII: High-Level Mission Composition & Flavor ---")
-            if objectives and len(objectives) >= 2:
-                print("8.1 Testing create_mission_flow...")
-                flow = mission_helper.create_mission_flow(objectives[0]['name'], 'STRIKE', objectives[1]['name'])
-                print(f"  -> Generated mission flow: {flow is not None}")
-
-            print("\n8.2 Testing get_procedural_location_name...")
-            name = mission_helper.get_procedural_location_name(mountain_pos)
-            print(f"  -> Procedural name for mountain position: '{name}'")
-
-            print("\n8.3 Testing get_area_defensibility_score...")
-            score = mission_helper.get_area_defensibility_score((city_pos[0], city_pos[2]), 2000)
-            print(f"  -> Defensibility score for city area: {score:.1f}/10")
-
-            print("\n8.4 Testing calculate_threat_intervisibility...")
-            vis_graph = mission_helper.calculate_threat_intervisibility(wedge)
-            print(f"  -> Calculated intervisibility for {len(vis_graph)} units.")
-            
-            print("\n8.5 Testing validate_mission_feasibility...")
-            units_to_check = [
-                {'unit_type': 'tank', 'position': city_pos}, # Should be fine
-                {'unit_type': 'truck', 'position': mountain_pos}, # Should fail
-            ]
-            errors = mission_helper.validate_mission_feasibility(units_to_check)
-            print(f"  -> Validation found {len(errors)} errors.")
-
-            print("\n8.6 Testing find_scenic_overlook...")
-            overlook = mission_helper.find_scenic_overlook(city_pos)
-            print(f"  -> Found scenic overlook: {overlook is not None}")
-            
-            print("\n8.7 Testing get_map_briefing_data...")
-            briefing = mission_helper.get_map_briefing_data()
-            print(f"  -> Generated briefing data: {briefing}")
-
-
-        except Exception as e:
-            print(f"\nAN ERROR OCCURRED DURING TESTING: {e}")
-            traceback.print_exc()
 
     # --- Military Tactical Functions ---
     # Consolidated military functionality for intelligent mission generation
@@ -3007,4 +2371,3 @@ if __name__ == "__main__":
         
         result['has_los'] = True
         return result
-

@@ -1,1256 +1,479 @@
 # -*- coding: utf-8 -*-
 """
-Procedural terrain and city generation module mimicking VTOL VR's system.
+Terrain, city, road and static prefab reconstruction for VTOL VR heightmap maps.
+
+Mirrors the game code (decompiled):
+- Height:   VTMapGenerator.GetHeightmapAltitude -> lerp(-80, 6000, R) sampled bilinearly, max(0, h).
+- Flatten:  VTTModFlatRect (airbases, docks) flattens a local rect and blends over flattenRadius.
+- Cities:   VTMapCities.ProcessChunk -> one CityBuilderPixel per vertex whose 2x2 pixel quad has G > 0.1.
+- Roads:    BezierRoads segments (s, m, e) linked by ns/ps, Intersection nodes and shared endpoints.
 """
 import os
-import json
-import traceback
-from decimal import Decimal, ROUND_HALF_EVEN, ROUND_FLOOR
+import heapq
 
 import numpy as np
 from PIL import Image
 from scipy.ndimage import map_coordinates
+from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation as R
 
 from ..parsers.vtm_parser import parse_vtol_data
 from ..resources.resources import get_city_layout_database, get_prefab_database, get_noise_image
 from ..misc.logger import create_logger
 
-# --- City layout center offset (meters) ---
-# Empirically aligns procedural city placements with in-game meshes
-# Can be overridden at runtime via environment variables:
-#   PYTOL_MANUAL_OFFSET_X, PYTOL_MANUAL_OFFSET_Z
-try:
-    MANUAL_OFFSET_X = float(os.getenv('PYTOL_MANUAL_OFFSET_X', '10'))
-except Exception:
-    MANUAL_OFFSET_X = 10.0
-try:
-    MANUAL_OFFSET_Z = float(os.getenv('PYTOL_MANUAL_OFFSET_Z', '-10'))
-except Exception:
-    MANUAL_OFFSET_Z = -10.0
+CHUNK_SIZE = 3072.0
+VERTS_PER_SIDE = 20  # VTMapCities uses 20 heightmap pixels per chunk
+METERS_PER_PIXEL = CHUNK_SIZE / VERTS_PER_SIDE
+# VTMapGenerator.hm_minHeight / hm_maxHeight: constants, not stored in the .vtm.
+HM_MIN_HEIGHT = -80.0
+HM_MAX_HEIGHT = 6000.0
+# Local position of every CityBuilderPixel 'RotationTf' (== CityBuilderPixel.pixelCenterPoint).
+# Layout DB bounds are relative to this transform; the prefab root sits on the pixel vertex.
+CITY_PIXEL_CENTER = np.array([87.75, 0.0, 63.75])
+BEZIER_SAMPLES = 5
+# VTMapEdStructurePrefab flatten data (prefab YAML: doFlatten, flattenRect center/extents, flattenRadius).
+# Only these prefabs have doFlatten = 1.
+FLATTEN_PREFABS = {
+    'airbase1': {'center': (288.73, -122.06), 'extents': (905.4, 1795.76), 'radius': 579.7},
+    'airbase2': {'center': (72.0, 26.42), 'extents': (791.2, 1534.7), 'radius': 550.0},
+    'airbase3': {'center': (428.0, -314.0), 'extents': (1660.1, 2042.17), 'radius': 580.0},
+    'dock1': {'center': (0.0, -206.0), 'extents': (223.63, 150.0), 'radius': 71.0},
+}
+BASE_KEYWORDS = ('airbase', 'carrier', 'fob')
 
-# --- Base flatten zone margin (meters) ---
-# Expand base flatten polygons by this margin to match in-game flattening area
-# Useful when base footprints are slightly smaller than actual terrain flattening
-try:
-    BASE_FLATTEN_MARGIN = float(os.getenv('PYTOL_BASE_FLATTEN_MARGIN', '0'))
-except Exception:
-    BASE_FLATTEN_MARGIN = 0.0
+
+def _as_list(node):
+    if node is None or node == '':
+        return []
+    return node if isinstance(node, list) else [node]
+
+
+def unity_euler_to_matrix(euler_xyz):
+    """Unity Euler (x, y, z) degrees -> rotation matrix. Unity applies Z, then X, then Y."""
+    x, y, z = euler_xyz
+    return R.from_euler('YXZ', [y, x, z], degrees=True).as_matrix()
 
 
 def normal_to_euler_angles(terrain_normal, yaw_degrees):
-    """Calculates Euler angles (pitch, yaw, roll) to align an object."""
-    yaw_rotation = R.from_euler('y', yaw_degrees, degrees=True)
-    source_up = np.array([0, 1, 0])
-    if np.linalg.norm(terrain_normal) < 1e-6: 
-        terrain_normal = source_up
-    axis = np.cross(source_up, terrain_normal)
-    angle = np.arccos(np.dot(source_up, terrain_normal))
-    if np.linalg.norm(axis) < 1e-6:
-        tilt_rotation = R.identity() if angle < np.pi/2 else R.from_euler('x', 180, degrees=True)
-    else:
-        tilt_rotation = R.from_rotvec(axis / np.linalg.norm(axis) * angle)
-    final_rotation = tilt_rotation * yaw_rotation
-    euler_angles = final_rotation.as_euler('yxz', degrees=True)
-    pitch, yaw, roll = euler_angles[1], euler_angles[0], euler_angles[2]
-    if roll < 0: 
-        roll += 360
-    return (pitch, yaw, roll)
+    """Unity Euler (pitch, yaw, roll) that yaws an object then tilts its up axis onto terrain_normal."""
+    up = np.array([0.0, 1.0, 0.0])
+    n = np.asarray(terrain_normal, dtype=float)
+    n = n / np.linalg.norm(n) if np.linalg.norm(n) > 1e-6 else up
+    axis = np.cross(up, n)
+    angle = np.arccos(np.clip(np.dot(up, n), -1.0, 1.0))
+    tilt = R.from_rotvec(axis / np.linalg.norm(axis) * angle) if np.linalg.norm(axis) > 1e-6 else R.identity()
+    yaw, pitch, roll = (tilt * R.from_euler('Y', yaw_degrees, degrees=True)).as_euler('YXZ', degrees=True)
+    return (float(pitch), float(yaw % 360.0), float(roll % 360.0))
+
 
 def get_bezier_point(s, m, e, t):
-    """Calculates a point on a quadratic Bézier curve."""
+    """Point on a quadratic Bezier curve."""
     t = np.clip(t, 0, 1)
-    a = s + t * (m - s)
-    b = m + t * (e - m)
-    return a + t * (b - a)
+    return (1 - t) ** 2 * s + 2 * (1 - t) * t * m + t ** 2 * e
+
+
+def _box_corners(b):
+    """Bounds [minx, maxx, miny, maxy, minz, maxz] -> 8 corners."""
+    return np.array([[x, y, z] for x in b[0:2] for y in b[2:4] for z in b[4:6]])
 
 
 class TerrainCalculator:
-    """
-    Calculates terrain height, normals, and procedural object placement.
-    """
+    """Terrain height/normals plus city blocks, roads, bases and static prefab surfaces of a custom map."""
 
     def __init__(self, map_name: str = '', map_directory_path: str = '', vtol_directory: str = '', verbose: bool = True):
-        """Initializes the TerrainCalculator by loading all necessary data."""
         self.verbose = verbose
-        # Centralized logger
         self.logger = create_logger(verbose=verbose, name="TerrainCalculator")
-        
+
         if map_directory_path:
             self.map_dir = map_directory_path
             self.map_name = os.path.basename(os.path.normpath(map_directory_path))
-        elif map_name and vtol_directory:
-            self.map_dir = os.path.join(os.path.normpath(vtol_directory), 'CustomMaps', map_name)
-            self.map_name = map_name
-        elif map_name and os.getenv('VTOL_VR_DIR'):
-            self.map_dir = os.path.join(os.path.normpath(os.getenv('VTOL_VR_DIR')), 'CustomMaps', map_name)
+        elif map_name and (vtol_directory or os.getenv('VTOL_VR_DIR')):
+            self.map_dir = os.path.join(os.path.normpath(vtol_directory or os.getenv('VTOL_VR_DIR')), 'CustomMaps', map_name)
             self.map_name = map_name
         else:
             raise ValueError("Either 'map_directory_path' or both 'map_name' and 'vtol_directory' must be provided.")
-        
-        # Check for known incompatible maps
-        if hasattr(self, 'map_name') and self.map_name == 'afMtnsHills':
-            raise ValueError(
-                "Map 'afMtnsHills' has known compatibility issues with pytol and cannot be loaded.\n"
-                "Please try a different map."
-            )
-        
-        self._log(f"Initializing TerrainCalculator for: {self.map_dir}")
 
-        # --- Load Data ---
-        self._load_vtm_file(self.map_dir)
+        self.logger.info(f"Initializing TerrainCalculator for: {self.map_dir}")
+        self._load_vtm_file()
         self._load_textures()
-        self._load_databases()
+        self.city_layouts_db = get_city_layout_database()
+        self.layouts_by_level = self.city_layouts_db['layouts_by_level']
+        self.layout_data_db = self.city_layouts_db['layout_data']
+        self.individual_prefabs_db = get_prefab_database()
 
-        # --- Calibrate and Pre-process ---
-        self.coord_transform_mode = None
-        self._discover_coordinate_transform()
-        # Optional vertical calibration against known ground-truth points (e.g., roads)
-        self._auto_calibrate_height_if_enabled()
-        
-        # --- Pre-process bases FIRST (before city blocks, as get_terrain_height needs them) ---
-        self.bases = self._process_bases() # Extract base information
-        
-        # Then process other objects that may call get_terrain_height
+        self.flatten_mods = self._process_flatten_mods()
+        self.bases = self._process_bases()
         self.city_blocks = self._generate_all_city_blocks()
         self.static_surfaces = self._process_static_prefabs()
-        self.road_segments = self._process_all_roads() # New
-        
-        self._log(f"Map Size: {self.total_map_size_meters/1000.0:.1f} km ({self.map_size_grids} grids)")
-        self._log(f"Altitude Range: {self.min_height}m to {self.max_height}m")
-        self._log(f"Processed {len(self.city_blocks)} city blocks.")
-        self._log(f"Processed {len(self.static_surfaces)} static surfaces.")
-        self._log(f"Processed {len(self.road_segments)} total road segments.")
-        self._log(f"Processed {len(self.bases)} bases.")
-        self._log(f"Using Coordinate Transform Mode = {self.coord_transform_mode}")
+        self.road_segments = self._process_all_roads()
+        self._road_p1 = np.array([[s[0][0], s[0][2]] for s in self.road_segments]).reshape(-1, 2)
+        self._road_p2 = np.array([[s[1][0], s[1][2]] for s in self.road_segments]).reshape(-1, 2)
 
-    def _log(self, message: str):
-        """Route messages through centralized logger with simple level detection."""
-        msg = str(message).lstrip()
-        lower = msg.lower()
-        if lower.startswith("warning") or msg.startswith("⚠"):
-            self.logger.warning(msg)
-        elif lower.startswith("error") or lower.startswith("fatal"):
-            self.logger.error(msg)
-        else:
-            self.logger.info(msg)
+        self.logger.info(f"Map Size: {self.total_map_size_meters / 1000.0:.1f} km ({self.map_size_grids} grids)")
+        self.logger.info(f"Processed {len(self.city_blocks)} city blocks, {len(self.static_surfaces)} static surfaces, "
+                         f"{len(self.road_segments)} road segments ({len(self.bridge_segments)} on bridges), "
+                         f"{len(self.bases)} bases.")
 
-    def _load_vtm_file(self, map_directory_path):
-        vtm_filename = os.path.basename(os.path.normpath(map_directory_path)) + ".vtm"
-        vtm_path = os.path.join(self.map_dir, vtm_filename)
-        try:
-            with open(os.path.normpath(vtm_path), 'r', encoding='utf-8') as f:
-                vtm_content = f.read()
-        except FileNotFoundError as e: 
-            raise FileNotFoundError(f"Fatal Error! .vtm file not found: '{vtm_path}'.") from e
-        parsed_data = parse_vtol_data(vtm_content)
-        self.map_data = parsed_data.get('VTMapCustom')
-        if not self.map_data: 
+    # --- Loading ---
+    def _load_vtm_file(self):
+        vtm_path = os.path.join(self.map_dir, self.map_name + ".vtm")
+        with open(vtm_path, 'r', encoding='utf-8') as f:
+            self.map_data = parse_vtol_data(f.read()).get('VTMapCustom')
+        if not self.map_data:
             raise ValueError("The .vtm file does not contain 'VTMapCustom' data.")
-        self.map_size_grids = int(self.map_data.get('mapSize'))
-        if not self.map_size_grids: 
-            raise ValueError("'mapSize' not found in .vtm file.")
-        self.chunk_size_meters = 3072.0
-        self.total_map_size_meters = float(self.map_size_grids) * self.chunk_size_meters
-        # Default/fallback range
-        self.max_height = float(self.map_data.get('hm_maxHeight', 6000.0))
-        self.min_height = float(self.map_data.get('hm_minHeight', -80.0))
-
-        # Try to read from nested TerrainSettings if available
-        ts = self.map_data.get('TerrainSettings', {}) or {}
-        def _get_first(ts_dict, keys):
-            for k in keys:
-                if k in ts_dict:
-                    try:
-                        return float(ts_dict.get(k))
-                    except Exception:
-                        continue
-            return None
-
-        # Common key variants observed/expected in VTOL VR content
-        max_keys = ['maxMtnHeight', 'maxHeight', 'hm_maxHeight']
-        min_keys = ['minMtnHeight', 'minHeight', 'seaLevel', 'hm_minHeight']
-        max_from_ts = _get_first(ts, max_keys)
-        min_from_ts = _get_first(ts, min_keys)
-        if max_from_ts is not None:
-            self.max_height = max_from_ts
-        if min_from_ts is not None:
-            self.min_height = min_from_ts
-
-        # Optional: try to read overrides from Unity .meta sidecar (height.png.meta)
-        # Some maps may encode custom min/max in TextureImporter.userData or ad-hoc keys
-        try:
-            self._load_height_meta_if_any()
-        except Exception:
-            # Non-fatal: continue with existing min/max
-            pass
-
-        # Optional post-adjustment scale/offset applied to terrain-derived heights only
-        try:
-            self.height_post_scale = float(os.getenv('PYTOL_HEIGHT_POST_SCALE', '1.0'))
-        except Exception:
-            self.height_post_scale = 1.0
-        try:
-            self.height_post_offset = float(os.getenv('PYTOL_HEIGHT_POST_OFFSET', '0.0'))
-        except Exception:
-            self.height_post_offset = 0.0
-
-    def _load_height_meta_if_any(self):
-        """Optionally parse Unity's height.png.meta for altitude hints.
-
-        Heuristics:
-        - If height.png.meta contains userData with JSON (e.g., {"minHeight":-80, "maxHeight":6000}), apply when VTM didn't provide values.
-        - Else, look for plain YAML-like keys: minHeight: <num>, maxHeight: <num>.
-        - Only override values that were not already set by VTM/TerrainSettings (i.e., when those were missing).
-        """
-        meta_path = os.path.join(self.map_dir, 'height.png.meta')
-        if not os.path.exists(meta_path):
-            return
-        try:
-            with open(meta_path, 'r', encoding='utf-8') as f:
-                meta_text = f.read()
-        except Exception:
-            return
-
-        # Track whether VTM/TerrainSettings provided values
-        had_vtm_max = 'hm_maxHeight' in self.map_data or ('TerrainSettings' in self.map_data and self.map_data.get('TerrainSettings'))
-        had_vtm_min = 'hm_minHeight' in self.map_data or ('TerrainSettings' in self.map_data and self.map_data.get('TerrainSettings'))
-
-        # Try to extract JSON from userData: "{...}"
-        import re
-        import json
-        m = re.search(r'userData:\s*"([^"]+)"', meta_text)
-        if m:
-            blob = m.group(1)
-            try:
-                data = json.loads(blob)
-                if isinstance(data, dict):
-                    if not had_vtm_min and 'minHeight' in data:
-                        self.min_height = float(data['minHeight'])
-                    if not had_vtm_max and 'maxHeight' in data:
-                        self.max_height = float(data['maxHeight'])
-            except Exception:
-                pass
-
-        # Fallback: parse simple YAML-like lines if present
-        if not had_vtm_min:
-            m2 = re.search(r'\bminHeight:\s*([-+]?\d+(?:\.\d+)?)', meta_text)
-            if m2:
-                try:
-                    self.min_height = float(m2.group(1))
-                except Exception:
-                    pass
-        if not had_vtm_max:
-            m3 = re.search(r'\bmaxHeight:\s*([-+]?\d+(?:\.\d+)?)', meta_text)
-            if m3:
-                try:
-                    self.max_height = float(m3.group(1))
-                except Exception:
-                    pass
+        self.map_size_grids = int(self.map_data['mapSize'])
+        self.chunk_size_meters = CHUNK_SIZE
+        self.total_map_size_meters = self.map_size_grids * CHUNK_SIZE
+        self.min_height, self.max_height = HM_MIN_HEIGHT, HM_MAX_HEIGHT
+        # ponytail: edge blending (VTTHeightMap.GetBlendedHeight) toward out-of-bounds terrain is not modelled;
+        # only the outer ~5% of the map differs. Needs the game's OOB heightmap for edgeMode=Hills.
+        self.edge_mode = self.map_data.get('edgeMode', 'Water')
 
     def _load_textures(self):
-        heightmap_path = os.path.join(self.map_dir, 'height.png')
-        try:
-            with Image.open(heightmap_path) as image:
-                image = image.convert('RGB')
-                np_image = np.array(image)
-                flip_flag = os.getenv('PYTOL_HEIGHT_FLIPUD', '1') != '0'
+        # Unity textures have a bottom-left origin, so flip rows: data[py, px] == Texture2D.GetPixel(px, py).
+        with Image.open(os.path.join(self.map_dir, 'height.png')) as image:
+            rgb = np.flipud(np.array(image.convert('RGB'))).astype(np.float32) / 255.0
+        self.heightmap_data_r, self.heightmap_data_g = rgb[:, :, 0], rgb[:, :, 1]
+        self.hm_height, self.hm_width = self.heightmap_data_r.shape
+        noise = np.array(get_noise_image().convert('RGB'))[:, :, 0]
+        self.noise_texture_data = np.flipud(noise).astype(np.float32) / 255.0
+        self.noise_height, self.noise_width = self.noise_texture_data.shape
 
-                # Extract channels as floats 0..1
-                chan_r = np_image[:, :, 0].astype(np.float32) / 255.0
-                chan_g = np_image[:, :, 1].astype(np.float32) / 255.0
-                chan_b = np_image[:, :, 2].astype(np.float32) / 255.0
+    # --- Static prefabs, bases and terrain flattening ---
+    def get_all_static_prefabs(self):
+        return [{'prefab_id': p.get('prefab'), 'id': p.get('id'), 'base_name': p.get('baseName'),
+                 'position': [float(c) for c in p.get('globalPos', (0, 0, 0))],
+                 'rotation_euler': [float(r) for r in p.get('rotation', (0, 0, 0))]}
+                for p in _as_list(self.map_data.get('StaticPrefabs', {}).get('StaticPrefab'))]
 
-                # Optional sRGB -> linear correction
-                do_linearize = os.getenv('PYTOL_LINEARIZE_SRGB', '0') == '1'
-                if do_linearize:
-                    def srgb_to_linear(c: np.ndarray) -> np.ndarray:
-                        a = 0.055
-                        return np.where(c <= 0.04045, c / 12.92, ((c + a) / (1 + a)) ** 2.4)
-                    chan_r = srgb_to_linear(chan_r)
-                    chan_g = srgb_to_linear(chan_g)
-                    chan_b = srgb_to_linear(chan_b)
+    def _process_flatten_mods(self):
+        mods = []
+        for p in self.get_all_static_prefabs():
+            f = FLATTEN_PREFABS.get(p['prefab_id'])
+            if f:
+                mods.append({'position': np.array(p['position']), 'world_to_local': unity_euler_to_matrix(p['rotation_euler']).T,
+                             'center': np.array(f['center']), 'extents': np.array(f['extents']), 'radius': f['radius']})
+        return mods
 
-                # Choose which channel encodes height
-                height_channel = os.getenv('PYTOL_HEIGHT_CHANNEL', 'R').upper()
-                if height_channel == 'G':
-                    chosen_height = chan_g
-                elif height_channel == 'B':
-                    chosen_height = chan_b
-                else:
-                    chosen_height = chan_r
-
-                if flip_flag:
-                    chosen_height = np.flipud(chosen_height)
-                    chan_g = np.flipud(chan_g)
-
-                # Store height channel in R-slot for downstream code
-                self.heightmap_data_r = chosen_height
-                # Keep G-channel (city density) as-is (after optional flip)
-                self.heightmap_data_g = chan_g
-            self.hm_height, self.hm_width = self.heightmap_data_r.shape
-
-            noise_img = get_noise_image()
-            noise = np.array(noise_img.convert('L')).astype(np.float32) / 255.0
-            if flip_flag:
-                noise = np.flipud(noise)
-            self.noise_texture_data = noise
-            self.noise_height, self.noise_width = self.noise_texture_data.shape
-        except FileNotFoundError as e: 
-            raise FileNotFoundError(f"Fatal Error loading textures: {e}") from e
-
-    def _load_databases(self):
-        try:
-            self.city_layouts_db = get_city_layout_database()
-            self.layouts_by_level = self.city_layouts_db.get('layouts_by_level')
-            self.layout_data_db = self.city_layouts_db.get('layout_data')
-            
-            self.individual_prefabs_db = get_prefab_database()
-
-        except FileNotFoundError as e: 
-            raise FileNotFoundError(f"Fatal Error loading databases: {e}") from e
-
-    def _process_static_prefabs(self):
-        """Parses static prefabs from .vtm and calculates world-space bounds for all their surfaces."""
-        static_prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
-        if not isinstance(static_prefabs_node, list): 
-            static_prefabs_node = [static_prefabs_node] if static_prefabs_node else []
-        
-        processed_surfaces = []
-        prefab_name_to_key = {os.path.splitext(os.path.basename(key))[0]: key for key in self.individual_prefabs_db.keys()}
-
-        for static_prefab in static_prefabs_node:
-            prefab_name = static_prefab.get('prefab')
-            db_key = prefab_name_to_key.get(prefab_name)
-            if not db_key or db_key not in self.individual_prefabs_db: 
-                continue
-
-            try:
-                pos = np.array(static_prefab.get('globalPos'), dtype=float)
-                rot = np.array(static_prefab.get('rotation'), dtype=float)
-                prefab_rot_matrix = R.from_euler('yxz', [rot[1], rot[0], rot[2]], degrees=True).as_matrix()
-
-                for surface in self.individual_prefabs_db[db_key]:
-                    bounds_rel = np.array(surface['bounds'])
-                    min_rel, max_rel = np.array([bounds_rel[0],bounds_rel[2],bounds_rel[4]]), np.array([bounds_rel[1],bounds_rel[3],bounds_rel[5]])
-                    corners_rel = [np.array([dx,dy,dz]) for dx in [min_rel[0],max_rel[0]] for dy in [min_rel[1],max_rel[1]] for dz in [min_rel[2],max_rel[2]]]
-                    corners_abs = [prefab_rot_matrix.dot(c) + pos for c in corners_rel]
-                    min_abs, max_abs = np.min(corners_abs, axis=0), np.max(corners_abs, axis=0)
-                    processed_surfaces.append({
-                        'name': surface.get('go_name', 'N/A'), 'prefab_name': prefab_name,
-                        'world_bounds': [float(v) for v in min_abs] + [float(v) for v in max_abs],
-                        'is_spawnable': surface.get('is_spawnable', False)
-                    })
-            except (TypeError, ValueError, KeyError) as e:
-                self._log(f"Warning: Could not process static prefab '{prefab_name}'. Invalid data: {e}")
-        return processed_surfaces
+    def _apply_flatten(self, world_x, world_z, h):
+        """VTTModFlatRect.ApplyHeightMod: flat inside the rect, linear blend out to `radius` from its edge."""
+        for m in self.flatten_mods:
+            local = m['world_to_local'] @ (np.stack([world_x - m['position'][0], np.zeros_like(world_x),
+                                                     world_z - m['position'][2]]))
+            outside = np.abs(np.stack([local[0], local[2]]) - m['center'][:, None]) - m['extents'][:, None]
+            dist = np.linalg.norm(np.maximum(outside, 0), axis=0)
+            t = np.clip(dist / m['radius'], 0, 1)
+            h = m['position'][1] + t * (h - m['position'][1])
+        return h
 
     def _process_bases(self):
-        """
-        Extracts base information from static prefabs (airbases, carriers, etc.)
-        and calculates their terrain flattening zones.
-        
-        Returns:
-            list: List of dictionaries containing base information including:
-                - id: Base ID from VTM
-                - name: Base name (if provided in VTM)
-                - prefab_type: Type of base (airbase1, airbase2, carrier1, etc.)
-                - position: Global position (x, y, z)
-                - rotation: Rotation angles (pitch, yaw, roll)
-                - footprint: Bounding box dimensions in local space
-                - flatten_zone: World-space polygon defining terrain flattening area
-        """
-        static_prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
-        if not isinstance(static_prefabs_node, list):
-            static_prefabs_node = [static_prefabs_node] if static_prefabs_node else []
-        
+        """Bases (airbases, carriers, FOBs) with their flatten rectangle as a world-space XZ polygon."""
         bases = []
-        base_keywords = ['airbase', 'carrier', 'fob']  # Base prefab identifiers
-        
-        for static_prefab in static_prefabs_node:
-            prefab_name = static_prefab.get('prefab', '').lower()
-            
-            # Check if this is a base prefab
-            if not any(keyword in prefab_name for keyword in base_keywords):
+        for p in self.get_all_static_prefabs():
+            name = (p['prefab_id'] or '').lower()
+            if not any(k in name for k in BASE_KEYWORDS):
                 continue
-            
-            try:
-                base_id = static_prefab.get('id')
-                base_name = static_prefab.get('baseName', f'Base {base_id}')
-                position = np.array(static_prefab.get('globalPos'), dtype=float)
-                rotation = np.array(static_prefab.get('rotation'), dtype=float)
-                
-                # Get footprint dimensions from prefab database
-                prefab_key = f"bases/{static_prefab.get('prefab')}.prefab"
-                footprint = self._get_base_footprint(prefab_key)
-                
-                # Calculate world-space flattening zone
-                # Bases flatten terrain in a rectangular area matching their footprint
-                flatten_zone = self._calculate_flatten_zone(position, rotation, footprint)
-                
-                base_info = {
-                    'id': base_id,
-                    'name': base_name,
-                    'prefab_type': static_prefab.get('prefab'),
-                    'position': position.tolist(),
-                    'rotation': rotation.tolist(),
-                    'footprint': footprint,
-                    'flatten_zone': flatten_zone,
-                    'flatten_height': float(position[1])  # Y coordinate is the flatten height
-                }
-                
-                bases.append(base_info)
-                
-            except (TypeError, ValueError, KeyError) as e:
-                self._log(f"Warning: Could not process base '{prefab_name}'. Invalid data: {e}")
-        
-        return bases
-    
-    def _get_base_footprint(self, prefab_key):
-        """
-        Retrieves the bounding box dimensions for a base prefab from the database.
-        
-        Args:
-            prefab_key: The prefab database key (e.g., "bases/airbase1.prefab")
-        
-        Returns:
-            dict: {'x_min', 'x_max', 'z_min', 'z_max', 'width', 'length'} in local space
-        """
-        if prefab_key not in self.individual_prefabs_db:
-            # Default fallback dimensions for unknown bases
-            return {
-                'x_min': -500, 'x_max': 500,
-                'z_min': -1000, 'z_max': 1000,
-                'width': 1000, 'length': 2000
-            }
-        
-        surfaces = self.individual_prefabs_db[prefab_key]
-        all_bounds = [surf['bounds'] for surf in surfaces]
-        
-        x_min = min(b[0] for b in all_bounds)
-        x_max = max(b[1] for b in all_bounds)
-        z_min = min(b[4] for b in all_bounds)
-        z_max = max(b[5] for b in all_bounds)
-        
-        return {
-            'x_min': float(x_min), 'x_max': float(x_max),
-            'z_min': float(z_min), 'z_max': float(z_max),
-            'width': float(x_max - x_min),
-            'length': float(z_max - z_min)
-        }
-    
-    def _calculate_flatten_zone(self, position, rotation, footprint):
-        """
-        Calculates the world-space polygon defining where a base flattens terrain.
-        
-        Args:
-            position: np.array of (x, y, z) global position
-            rotation: np.array of (pitch, yaw, roll) in degrees
-            footprint: dict with x_min, x_max, z_min, z_max in local space
-        
-        Returns:
-            list: Four corner points [[x1,z1], [x2,z2], [x3,z3], [x4,z4]] defining the rectangular flatten zone
-        """
-        # Create rotation matrix from Euler angles
-        rot_matrix = R.from_euler('yxz', [rotation[1], rotation[0], rotation[2]], degrees=True).as_matrix()
-        
-        # Apply margin to expand the footprint (if PYTOL_BASE_FLATTEN_MARGIN is set)
-        margin = BASE_FLATTEN_MARGIN
-        x_min = footprint['x_min'] - margin
-        x_max = footprint['x_max'] + margin
-        z_min = footprint['z_min'] - margin
-        z_max = footprint['z_max'] + margin
-        
-        # Define the four corners of the footprint rectangle in local space
-        corners_local = [
-            np.array([x_min, 0, z_min]),  # Bottom-left
-            np.array([x_max, 0, z_min]),  # Bottom-right
-            np.array([x_max, 0, z_max]),  # Top-right
-            np.array([x_min, 0, z_max])   # Top-left
-        ]
-        
-        # Transform to world space
-        corners_world = [rot_matrix.dot(c) + position for c in corners_local]
-        
-        # Return as [x, z] pairs (we only need horizontal coordinates for point-in-polygon test)
-        return [[float(c[0]), float(c[2])] for c in corners_world]
-
-    def _process_all_roads(self):
-        """
-        Generates line segments for both Bézier roads and procedural city grid roads.
-        This is run once at initialization.
-        """
-        all_segments = []
-        # 1. Process Bézier roads from .vtm
-        road_chunks = self.map_data.get('BezierRoads', {}).get('Chunk', [])
-        if not isinstance(road_chunks, list): 
-            road_chunks = [road_chunks] if road_chunks else []
-        for chunk in road_chunks:
-            segments = chunk.get('Segment', [])
-            if not isinstance(segments, list): 
-                segments = [segments] if segments else []
-            for seg in segments:
-                try:
-                    s, m, e = np.array(seg['s']), np.array(seg['m']), np.array(seg['e'])
-                    # Sample points along the curve to create line segments
-                    points = [get_bezier_point(s, m, e, t) for t in np.linspace(0, 1, 5)]
-                    for i, _ in enumerate(points[:-1]):
-                        all_segments.append((points[i], points[i+1]))
-                except (KeyError, TypeError, ValueError): 
-                    continue
-        
-        # 2. Process procedural city grid roads using final block positions
-        if not self.city_blocks: 
-            return all_segments
-        
-        # Create a map from pixel coordinate to the block's world position for fast lookup
-        block_position_map = {tuple(block['pixel_coord']): block['world_position'] for block in self.city_blocks}
-
-        # This new logic calculates road segment endpoints by averaging the
-        # positions of prefabs on either side of the road gap.
-        for px_py_tuple, p_A_world_full in block_position_map.items():
-            px, py = px_py_tuple
-
-            # --- A. Check for a HORIZONTAL road segment ---
-            # A horizontal road runs BETWEEN py=1 and py=2, py=3 and py=4, etc.
-            # So, we trigger when py is ODD.
-            if (py % 2 != 0):
-                # We need 4 points to define the road segment:
-                # A=(px, py)     B=(px+1, py)
-                #   [--ROAD--]
-                # C=(px, py+1)   D=(px+1, py+1)
-                
-                coord_B = (px + 1, py)
-                coord_C = (px, py + 1)
-                coord_D = (px + 1, py + 1)
-
-                # Check if all 3 other prefabs exist
-                if (coord_B in block_position_map) and \
-                   (coord_C in block_position_map) and \
-                   (coord_D in block_position_map):
-                    
-                    p_B_world_full = block_position_map[coord_B]
-                    p_C_world_full = block_position_map[coord_C]
-                    p_D_world_full = block_position_map[coord_D]
-
-                    # Start of segment is midpoint between A and C
-                    road_z_start = (p_A_world_full[2] + p_C_world_full[2]) / 2.0
-                    road_x_start = p_A_world_full[0] # X is the same as A
-                    seg_start = np.array([road_x_start, 0, road_z_start])
-
-                    # End of segment is midpoint between B and D
-                    road_z_end = (p_B_world_full[2] + p_D_world_full[2]) / 2.0
-                    road_x_end = p_B_world_full[0] # X is the same as B
-                    seg_end = np.array([road_x_end, 0, road_z_end])
-                    
-                    all_segments.append((seg_start, seg_end))
-
-
-            # --- B. Check for a VERTICAL road segment ---
-            # A vertical road runs BETWEEN px=1 and px=2, px=3 and px=4, etc.
-            # So, we trigger when px is ODD.
-            if (px % 2 != 0):
-                # We need 4 points to define the road segment:
-                # A=(px, py)   C=(px, py+1)
-                #     |
-                #   [ROAD]
-                #     |
-                # B=(px+1, py) D=(px+1, py+1)
-                
-                coord_B = (px + 1, py)
-                coord_C = (px, py + 1)
-                coord_D = (px + 1, py + 1)
-                
-                # Check if all 3 other prefabs exist
-                if (coord_B in block_position_map) and \
-                   (coord_C in block_position_map) and \
-                   (coord_D in block_position_map):
-
-                    p_B_world_full = block_position_map[coord_B]
-                    p_C_world_full = block_position_map[coord_C]
-                    p_D_world_full = block_position_map[coord_D]
-                    
-                    # Start of segment is midpoint between A and B
-                    road_x_start = (p_A_world_full[0] + p_B_world_full[0]) / 2.0
-                    road_z_start = p_A_world_full[2] # Z is the same as A
-                    seg_start = np.array([road_x_start, 0, road_z_start])
-
-                    # End of segment is midpoint between C and D
-                    road_x_end = (p_C_world_full[0] + p_D_world_full[0]) / 2.0
-                    road_z_end = p_C_world_full[2] # Z is the same as C
-                    seg_end = np.array([road_x_end, 0, road_z_end])
-                    
-                    all_segments.append((seg_start, seg_end))
-
-        # --- END MODIFICATION ---
-        return all_segments
-        
-    # --- Other private methods (_discover_coordinate_transform, _world_to_pixel..., etc.) remain unchanged ---
-    def _discover_coordinate_transform(self):
-        """Determine UV-to-pixel orientation by calibrating against a known prefab.
-
-        We test 8 possible image orientation modes and pick the one whose sampled
-        height (from the R channel) matches the prefab's expected height best.
-        Fallback to mode 4 if calibration fails.
-        """
-        try:
-            # Optional override via environment variable for quick testing/fixes
-            forced_mode = os.getenv('PYTOL_FORCE_COORD_MODE')
-            if forced_mode is not None:
-                try:
-                    mode_val = int(forced_mode)
-                    if 0 <= mode_val <= 7:
-                        self.coord_transform_mode = mode_val
-                        self._log(f"Coordinate transform mode forced via env: {mode_val}")
-                        return
-                    else:
-                        self._log(f"Warning: Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (out of range 0..7)")
-                except ValueError:
-                    self._log(f"Warning: Ignoring PYTOL_FORCE_COORD_MODE={forced_mode} (not an int)")
-
-            prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
-            if not isinstance(prefabs_node, list):
-                prefabs_node = [prefabs_node] if prefabs_node else []
-            if not prefabs_node:
-                raise ValueError("No static prefabs found for calibration.")
-
-            prefab_0 = prefabs_node[0]
-            if 'globalPos' not in prefab_0:
-                raise ValueError("First static prefab lacks 'globalPos'.")
-
-            global_pos = prefab_0['globalPos']
-            if not isinstance(global_pos, (list, tuple)) or len(global_pos) != 3:
-                raise ValueError("Invalid 'globalPos' format.")
-
-            world_x, expected_y, world_z = map(float, global_pos)
-            expected_r = (expected_y - self.min_height) / (self.max_height - self.min_height)
-            uv_x = world_x / self.total_map_size_meters
-            uv_z = world_z / self.total_map_size_meters
-
-            best_mode = -1
-            min_diff = float('inf')
-            for mode in range(8):
-                found_r = self._get_pixel_value(self.heightmap_data_r, uv_x, uv_z, mode)
-                diff = abs(found_r - expected_r)
-                if np.isclose(found_r, expected_r, atol=0.001):
-                    self.coord_transform_mode = mode
-                    return
-                if diff < min_diff:
-                    min_diff = diff
-                    best_mode = mode
-
-            if best_mode != -1:
-                self.coord_transform_mode = best_mode
+            rot = unity_euler_to_matrix(p['rotation_euler'])
+            f = FLATTEN_PREFABS.get(p['prefab_id'])
+            if f:
+                (cx, cz), (ex, ez) = f['center'], f['extents']
+                x_min, x_max, z_min, z_max = cx - ex, cx + ex, cz - ez, cz + ez
             else:
-                raise Exception("Calibration failed - no suitable mode found.")
-        except Exception as e:
-            self._log(f"Warning: Calibration failed ({e}). Falling back to mode 4.")
-            self.coord_transform_mode = 4
-    def _world_to_pixel_bankers_rounding(self, world_x, world_z):
-        uv_x = Decimal(str(world_x)) / Decimal(str(self.total_map_size_meters))
-        uv_z = Decimal(str(world_z)) / Decimal(str(self.total_map_size_meters))
+                key = f"bases/{p['prefab_id']}.prefab"
+                bounds = [s['bounds'] for s in self.individual_prefabs_db.get(key, [])] or [[-500, 500, 0, 0, -1000, 1000]]
+                x_min, x_max = min(b[0] for b in bounds), max(b[1] for b in bounds)
+                z_min, z_max = min(b[4] for b in bounds), max(b[5] for b in bounds)
+            corners = np.array([[x_min, 0, z_min], [x_max, 0, z_min], [x_max, 0, z_max], [x_min, 0, z_max]]) @ rot.T + p['position']
+            bases.append({
+                'id': p['id'], 'name': p['base_name'] or f"Base {p['id']}", 'prefab_type': p['prefab_id'],
+                'position': p['position'], 'rotation': p['rotation_euler'],
+                'footprint': {'x_min': x_min, 'x_max': x_max, 'z_min': z_min, 'z_max': z_max,
+                              'width': x_max - x_min, 'length': z_max - z_min},
+                'flatten_zone': [[float(c[0]), float(c[2])] for c in corners],
+                'flatten_height': float(p['position'][1]),
+            })
+        return bases
 
-        pixel_x_f, pixel_y_f = Decimal(0), Decimal(0)
-        map_width_minus_1 = Decimal(self.hm_width - 1)
-        map_height_minus_1 = Decimal(self.hm_height - 1)
-        mode = self.coord_transform_mode
-        u, v = uv_x, uv_z
+    def get_all_bases(self):
+        return self.bases.copy()
 
-        if mode == 0:
-            pixel_x_f, pixel_y_f = u * map_width_minus_1, v * map_height_minus_1
-        elif mode == 1:
-            pixel_x_f, pixel_y_f = v * map_width_minus_1, u * map_height_minus_1
-        elif mode == 2:
-            pixel_x_f, pixel_y_f = (Decimal(1) - u) * map_width_minus_1, v * map_height_minus_1
-        elif mode == 3:
-            pixel_x_f, pixel_y_f = v * map_width_minus_1, (Decimal(1) - u) * map_height_minus_1
-        elif mode == 4:
-            pixel_x_f, pixel_y_f = u * map_width_minus_1, (Decimal(1) - v) * map_height_minus_1
-        elif mode == 5:
-            pixel_x_f, pixel_y_f = (Decimal(1) - v) * map_width_minus_1, u * map_height_minus_1
-        elif mode == 6:
-            pixel_x_f, pixel_y_f = (Decimal(1) - u) * map_width_minus_1, (Decimal(1) - v) * map_height_minus_1
-        elif mode == 7:
-            pixel_x_f, pixel_y_f = (Decimal(1) - v) * map_width_minus_1, (Decimal(1) - u) * map_height_minus_1
+    def get_base_by_id(self, base_id):
+        return next((b.copy() for b in self.bases if b['id'] == base_id), None)
 
-        pixel_x = int(pixel_x_f.quantize(Decimal('1'), rounding=ROUND_HALF_EVEN))
-        pixel_y = int(pixel_y_f.quantize(Decimal('1'), rounding=ROUND_HALF_EVEN))
-        pixel_x = np.clip(pixel_x, 0, self.hm_width - 1)
-        pixel_y = np.clip(pixel_y, 0, self.hm_height - 1)
-        return pixel_x, pixel_y
-    def _pixel_to_world_vtstyle(self, px, py):
-        verts_per_side = 20
-        chunk_size = float(self.chunk_size_meters)
-        chunk_x = int(np.floor(px / verts_per_side))
-        chunk_y = int(np.floor(py / verts_per_side))
-        px_local = px - (chunk_x * verts_per_side)
-        py_local = py - (chunk_y * verts_per_side)
-        meters_per_pixel = chunk_size / float(verts_per_side)
-        local_x = float(px_local) * meters_per_pixel
-        local_z = float(py_local) * meters_per_pixel
-        world_x = (chunk_x * chunk_size) + local_x
-        world_z = (chunk_y * chunk_size) + local_z
-        return world_x, world_z
-    def _world_to_pixel_vtstyle_global(self, world_x, world_z):
-        verts_per_side = 20
-        chunk_size_d = Decimal(str(self.chunk_size_meters))
-        meters_per_pixel_d = chunk_size_d / Decimal(verts_per_side)
-        if meters_per_pixel_d == 0:
-            meters_per_pixel_d = Decimal(1.0)
+    def get_base_by_name(self, name):
+        return next((b.copy() for b in self.bases if name.lower() in b['name'].lower()), None)
 
-        world_x_d = Decimal(str(world_x))
-        world_z_d = Decimal(str(world_z))
-        chunk_x = int((world_x_d / chunk_size_d).to_integral_value(rounding=ROUND_FLOOR))
-        chunk_y = int((world_z_d / chunk_size_d).to_integral_value(rounding=ROUND_FLOOR))
-        local_x_d = world_x_d - (Decimal(chunk_x) * chunk_size_d)
-        local_z_d = world_z_d - (Decimal(chunk_y) * chunk_size_d)
-        px_local_d = (local_x_d / meters_per_pixel_d).to_integral_value(rounding=ROUND_FLOOR)
-        py_local_d = (local_z_d / meters_per_pixel_d).to_integral_value(rounding=ROUND_FLOOR)
-        px_global = chunk_x * verts_per_side + int(px_local_d)
-        py_global = chunk_y * verts_per_side + int(py_local_d)
-        return int(px_global), int(py_global)
-    def _get_pixel_value(self, data_channel, u, v, mode=None):
-        if mode is None:
-            mode = self.coord_transform_mode
+    def get_nearest_base(self, world_x, world_z):
+        if not self.bases:
+            return None, None
+        d = [np.hypot(b['position'][0] - world_x, b['position'][2] - world_z) for b in self.bases]
+        i = int(np.argmin(d))
+        return self.bases[i].copy(), float(d[i])
 
-        pixel_x_f, pixel_y_f = 0.0, 0.0
-        map_width_minus_1 = float(self.hm_width - 1)
-        map_height_minus_1 = float(self.hm_height - 1)
-        u_f, v_f = float(u), float(v)
+    def _process_static_prefabs(self):
+        name_to_key = {os.path.splitext(os.path.basename(k))[0]: k for k in self.individual_prefabs_db}
+        surfaces = []
+        for idx, p in enumerate(self.get_all_static_prefabs()):
+            key = name_to_key.get(p['prefab_id'])
+            if not key:
+                continue
+            rot, pos = unity_euler_to_matrix(p['rotation_euler']), np.array(p['position'])
+            for s in self.individual_prefabs_db[key]:
+                corners = _box_corners(s['bounds']) @ rot.T + pos
+                lo, hi = corners.min(axis=0), corners.max(axis=0)
+                surfaces.append({'name': s.get('go_name', 'N/A'), 'prefab_name': p['prefab_id'], 'prefab_index': idx,
+                                 'world_bounds': [float(v) for v in (*lo, *hi)], 'is_spawnable': s.get('is_spawnable', False)})
+        return surfaces
 
-        if mode == 0:
-            pixel_x_f, pixel_y_f = u_f * map_width_minus_1, v_f * map_height_minus_1
-        elif mode == 1:
-            pixel_x_f, pixel_y_f = v_f * map_width_minus_1, u_f * map_height_minus_1
-        elif mode == 2:
-            pixel_x_f, pixel_y_f = (1.0 - u_f) * map_width_minus_1, v_f * map_height_minus_1
-        elif mode == 3:
-            pixel_x_f, pixel_y_f = v_f * map_width_minus_1, (1.0 - u_f) * map_height_minus_1
-        elif mode == 4:
-            pixel_x_f, pixel_y_f = u_f * map_width_minus_1, (1.0 - v_f) * map_height_minus_1
-        elif mode == 5:
-            pixel_x_f, pixel_y_f = (1.0 - v_f) * map_width_minus_1, u_f * map_height_minus_1
-        elif mode == 6:
-            pixel_x_f, pixel_y_f = (1.0 - u_f) * map_width_minus_1, (1.0 - v_f) * map_height_minus_1
-        elif mode == 7:
-            pixel_x_f, pixel_y_f = (1.0 - v_f) * map_width_minus_1, (1.0 - u_f) * map_height_minus_1
-
-        try:
-            pixel_y_f_clamped = np.clip(pixel_y_f, 0.0, float(self.hm_height - 1))
-            pixel_x_f_clamped = np.clip(pixel_x_f, 0.0, float(self.hm_width - 1))
-            return map_coordinates(
-                data_channel,
-                [[pixel_y_f_clamped], [pixel_x_f_clamped]],
-                order=1,
-                mode='nearest',
-            )[0]
-        except Exception:
-            px_int = np.clip(int(round(pixel_x_f)), 0, self.hm_width - 1)
-            py_int = np.clip(int(round(pixel_y_f)), 0, self.hm_height - 1)
-            return data_channel[py_int, px_int]
-    def _iter_road_ground_points(self, max_points=200):
-        """Yield (x, y, z) points from BezierRoads that should lie on terrain.
-
-        We use the control points s, m, e of each segment as anchors. These Y values
-        reflect terrain-conforming roads in VTOL VR, providing good calibration pairs.
-        """
-        road_chunks = self.map_data.get('BezierRoads', {}).get('Chunk', [])
-        if not isinstance(road_chunks, list):
-            road_chunks = [road_chunks] if road_chunks else []
-        count = 0
-        for chunk in road_chunks:
-            segments = chunk.get('Segment', [])
-            if not isinstance(segments, list):
-                segments = [segments] if segments else []
-            for seg in segments:
-                for key in ('s', 'm', 'e'):
-                    pt = seg.get(key)
-                    if isinstance(pt, (list, tuple)) and len(pt) == 3:
-                        yield float(pt[0]), float(pt[1]), float(pt[2])
-                        count += 1
-                        if count >= max_points:
-                            return
-    def _auto_calibrate_height_if_enabled(self):
-        """Optionally fit y = A*r + B using road anchor points and adjust min/max.
-
-        Enabled when:
-        - PYTOL_AUTO_HEIGHT_CALIBRATE=1, or
-        - No explicit height info found in VTM/TerrainSettings (default-on fallback).
-
-        If not enough anchors exist or fit fails, keep existing min/max.
-        """
-        flag = os.getenv('PYTOL_AUTO_HEIGHT_CALIBRATE', '0')
-        enabled = (flag == '1')
-        if not enabled:
-            return
-        try:
-            anchors = list(self._iter_road_ground_points(max_points=400))
-            if len(anchors) < 3:
-                return
-            uvs = []
-            ys = []
-            for (wx, wy, wz) in anchors:
-                uvx = wx / self.total_map_size_meters
-                uvz = wz / self.total_map_size_meters
-                r = self._get_pixel_value(self.heightmap_data_r, uvx, uvz)
-                if np.isfinite(r):
-                    uvs.append(float(r))
-                    ys.append(float(wy))
-            if len(uvs) < 3:
-                return
-            U = np.array(uvs, dtype=float)
-            Y = np.array(ys, dtype=float)
-            X = np.vstack([U, np.ones(len(U))]).T
-            coef, *_ = np.linalg.lstsq(X, Y, rcond=None)
-            Y_pred = X @ coef
-            resid = np.abs(Y - Y_pred)
-            # Robustify: trim top 20% largest residuals and refit if enough points remain
-            if len(resid) >= 10:
-                thresh = np.quantile(resid, 0.8)
-                mask = resid <= thresh
-                if np.count_nonzero(mask) >= 3:
-                    X2 = X[mask]
-                    Y2 = Y[mask]
-                    coef, *_ = np.linalg.lstsq(X2, Y2, rcond=None)
-            A, B = float(coef[0]), float(coef[1])
-            # Update min/max so that y ≈ r*(max-min)+min, with range=A and min=B
-            new_min = B
-            new_max = B + A
-            if np.isfinite(new_min) and np.isfinite(new_max) and new_max > new_min:
-                self.min_height = float(new_min)
-                self.max_height = float(new_max)
-                self._log(f"Calibrated altitude range from roads: {self.min_height:.3f}m to {self.max_height:.3f}m (A={A:.6f}, B={B:.6f})")
-        except Exception as e:
-            self._log(f"Warning: Auto height calibration failed: {e}")
-    
-    # --- Public Methods ---
+    # --- Heightmap ---
     def get_terrain_height(self, world_x, world_z):
-        """
-        Returns terrain height at a world coordinate, accounting for terrain deformation.
-        
-    Checks in priority order:
-    1. Base flattening zones (airbases, carriers, etc.)
-    2. Natural heightmap terrain
+        """Ground height (VTMapGenerator.GetHeightmapAltitude plus base flattening). Accepts scalars or arrays."""
+        x, z = np.atleast_1d(np.asarray(world_x, dtype=float)), np.atleast_1d(np.asarray(world_z, dtype=float))
+        px = np.clip(x / self.total_map_size_meters * (self.hm_width - 1), 0, self.hm_width - 1)
+        py = np.clip(z / self.total_map_size_meters * (self.hm_height - 1), 0, self.hm_height - 1)
+        r = map_coordinates(self.heightmap_data_r, [py, px], order=1, mode='nearest')
+        h = np.maximum(0.0, self.min_height + r * (self.max_height - self.min_height))
+        h = self._apply_flatten(x, z, h)
+        return float(h[0]) if np.ndim(world_x) == 0 else h
 
-    Note: Procedural cities do not modify the terrain heightmap. In-game, city
-    meshes are conformed to the terrain via mesh deformation (raycasts), so
-    city areas use the natural height.
-        
-        Args:
-            world_x: X coordinate in world space
-            world_z: Z coordinate in world space
-        
-        Returns:
-            float: Terrain height in meters
-        """
-        if self.coord_transform_mode is None:
-            raise Exception("Not calibrated.")
-        
-        # Check if point is within any base's flattening zone
-        for base in self.bases:
-            if self._point_in_polygon(world_x, world_z, base['flatten_zone']):
-                return base['flatten_height']
-        
-        # Not in any deformation zone - return natural terrain height
-        uv_x = world_x / self.total_map_size_meters
-        uv_z = world_z / self.total_map_size_meters
-        r_val = self._get_pixel_value(self.heightmap_data_r, uv_x, uv_z)
-        height_m = (r_val * (self.max_height - self.min_height)) + self.min_height
-        # Apply optional post scale/offset (for calibration on maps with unknown ranges)
-        height_m = (height_m * getattr(self, 'height_post_scale', 1.0)) + getattr(self, 'height_post_offset', 0.0)
-        return max(0.0, height_m)
-    
-    def _point_in_polygon(self, x, z, polygon):
-        """
-        Ray casting algorithm to determine if a point is inside a polygon.
-        
-        Args:
-            x: X coordinate of point
-            z: Z coordinate of point
-            polygon: List of [x, z] vertex pairs defining the polygon
-        
-        Returns:
-            bool: True if point is inside polygon
-        """
-        n = len(polygon)
-        inside = False
-        
-        p1x, p1z = polygon[0]
-        for i in range(1, n + 1):
-            p2x, p2z = polygon[i % n]
-            if z > min(p1z, p2z):
-                if z <= max(p1z, p2z):
-                    if x <= max(p1x, p2x):
-                        if p1z != p2z:
-                            x_inters = (z - p1z) * (p2x - p1x) / (p2z - p1z) + p1x
-                        if p1x == p2x or x <= x_inters:
-                            inside = not inside
-            p1x, p1z = p2x, p2z
-        
-        return inside
-        
     def get_terrain_normal(self, world_x, world_z, delta=1.0):
         h0 = self.get_terrain_height(world_x, world_z)
         hx = self.get_terrain_height(world_x + delta, world_z)
         hz = self.get_terrain_height(world_x, world_z + delta)
-        vx = np.array([delta, hx - h0, 0])
-        vz = np.array([0, hz - h0, delta])
-        normal = np.cross(vz, vx)
-        norm_mag = np.linalg.norm(normal)
-        return normal / norm_mag if norm_mag > 0 else np.array([0, 1, 0])
+        normal = np.cross([0, hz - h0, delta], [delta, hx - h0, 0])
+        mag = np.linalg.norm(normal)
+        return normal / mag if mag > 0 else np.array([0.0, 1.0, 0.0])
 
     def get_asset_placement(self, world_x, world_z, yaw_degrees):
         h = self.get_terrain_height(world_x, world_z)
-        n = self.get_terrain_normal(world_x, world_z)
-        r = normal_to_euler_angles(n, yaw_degrees)
-        return {'position': (world_x, h, world_z), 'rotation': r}
+        return {'position': (world_x, h, world_z),
+                'rotation': normal_to_euler_angles(self.get_terrain_normal(world_x, world_z), yaw_degrees)}
 
-    def is_on_road(self, world_x, world_z, tolerance=10.0):
-        """Checks if a world coordinate is on any known road segment."""
-        point_2d = np.array([world_x, world_z])
-        for start_3d, end_3d in self.road_segments:
-            p1 = np.array([start_3d[0], start_3d[2]])
-            p2 = np.array([end_3d[0], end_3d[2]])
-            
-            line_vec = p2 - p1
-            point_vec = point_2d - p1
-            line_len_sq = np.dot(line_vec, line_vec)
-            if line_len_sq == 0.0:
-                continue
+    # --- Cities ---
+    @staticmethod
+    def _world_to_pixel(world_x, world_z):
+        """Pixel whose vertex is at or below/left of the point (floor)."""
+        return int(np.floor(world_x / METERS_PER_PIXEL)), int(np.floor(world_z / METERS_PER_PIXEL))
 
-            t = np.dot(point_vec, line_vec) / line_len_sq
-            t = np.clip(t, 0, 1)
-            
-            closest_point = p1 + t * line_vec
-            dist_sq = np.sum((point_2d - closest_point)**2)
-
-            if dist_sq < tolerance**2:
-                return True
-        return False
-
-    def get_smart_placement(self, world_x, world_z, yaw_degrees):
-        """
-        Determines placement on terrain, road, static prefab roof, or city block roof.
-        """
-        # --- 1. Check for Static Prefabs ---
-        highest_spawnable_static_y = -float('inf')
-        best_static_surface_name = "Static Prefab"
-        for surface in self.static_surfaces:
-            bounds = surface['world_bounds']
-            if (bounds[0] <= world_x <= bounds[3]) and (bounds[2] <= world_z <= bounds[5]):
-                if surface['is_spawnable'] and bounds[4] > highest_spawnable_static_y:
-                    highest_spawnable_static_y = bounds[4]
-                    best_static_surface_name = f"{surface['prefab_name']}/{surface['name']}"
-        if highest_spawnable_static_y > -float('inf'):
-            return {'type': 'static_prefab_roof', 'position': (world_x, highest_spawnable_static_y, world_z), 'rotation': (0.0, yaw_degrees, 0.0), 'snapped_to_building': best_static_surface_name}
-
-        # --- 2. NEW: Check for Roads ---
-        if self.is_on_road(world_x, world_z):
-            height = self.get_terrain_height(world_x, world_z)
-            return {'type': 'road', 'position': (world_x, height, world_z), 'rotation': (0.0, yaw_degrees, 0.0)}
-
-        # --- 3. Check for City Blocks ---
-        try: 
-            px, py = self._world_to_pixel_vtstyle_global(world_x, world_z)
-        except Exception: 
-            px, py = -1, -1
-        
-        layout_info = None
-        if px != -1:
-            corner_x, corner_z = self._pixel_to_world_vtstyle(px, py)
-            layout_info = self.get_city_layout_at(corner_x, corner_z)
-        
-        if layout_info:
-            meters_per_pixel = self.chunk_size_meters / 20.0
-            center_offset = meters_per_pixel / 2.0
-            center_x, center_z = corner_x + center_offset, corner_z + center_offset
-            final_center_x, final_center_z = center_x + MANUAL_OFFSET_X, center_z + MANUAL_OFFSET_Z
-            
-            # Sample ground height at the queried point (world_x, world_z) for better roof placement
-            # This better mimics VTOL's per-vertex mesh conform and reduces slope-induced errors
-            block_base_y = self.get_terrain_height(world_x, world_z)
-            block_pos = np.array([final_center_x, block_base_y, final_center_z])
-            block_rot = R.from_euler('y', layout_info['block_yaw_degrees'], degrees=True).as_matrix()
-
-            highest_spawnable_city_y = -float('inf')
-            best_city_surface_name = "City Block"
-            for s in layout_info['surfaces']:
-                b = s.get('bounds_rel_layout', [])
-                if len(b) != 6:
-                    continue
-                min_r, max_r = np.array([b[0],b[2],b[4]]), np.array([b[1],b[3],b[5]])
-                corners_r = [np.array([dx,dy,dz]) for dx in [min_r[0],max_r[0]] for dy in [min_r[1],max_r[1]] for dz in [min_r[2],max_r[2]]]
-                corners_a = [block_rot.dot(c) + block_pos for c in corners_r] # corners_a are now in final, offset world space
-                min_a, max_a = np.min(corners_a, axis=0), np.max(corners_a, axis=0)
-
-                # --- MODIFICATION ---
-                # Check against the final absolute bounds (min_a, max_a) directly.
-                # Do NOT subtract the offset again.
-                if (min_a[0] <= world_x <= max_a[0]) and \
-                   (min_a[2] <= world_z <= max_a[2]):
-                # --- END MODIFICATION ---
-                    if s.get('is_spawnable', False) and max_a[1] > highest_spawnable_city_y:
-                        highest_spawnable_city_y = max_a[1]
-                        best_city_surface_name = s.get('go_name', 'N/A')
-            
-            if highest_spawnable_city_y > -float('inf'):
-                return {'type': 'city_roof', 'position': (world_x, highest_spawnable_city_y, world_z), 'rotation': (0.0, yaw_degrees, 0.0), 'snapped_to_building': best_city_surface_name}
-
-        # --- 4. Default to Terrain ---
-        return {**self.get_asset_placement(world_x, world_z, yaw_degrees), 'type': 'terrain'}
-
-    # --- Renamed from public to private ---
-    def _generate_all_city_blocks(self):
-        """Generates data for all city blocks based on the heightmap G channel."""
-        all_blocks = []
-        width = self.hm_width
-        height = self.hm_height
-        city_pixel_channel = self.heightmap_data_g
-        meters_per_pixel = self.chunk_size_meters / 20.0
-        center_offset = meters_per_pixel / 2.0
-
-        for py in range(height - 1):
-            for px in range(width - 1):
-                try:
-                    g1 = city_pixel_channel[py, px]
-                    g2 = city_pixel_channel[py, px + 1]
-                    g3 = city_pixel_channel[py + 1, px + 1]
-                    g4 = city_pixel_channel[py + 1, px]
-                except IndexError:
-                    continue
-
-                if g1 > 0.1 and g2 > 0.1 and g3 > 0.1 and g4 > 0.1:
-                    corner_x, corner_z = self._pixel_to_world_vtstyle(px, py)
-                    center_x = corner_x + center_offset
-                    center_z = corner_z + center_offset
-                    layout_info = self.get_city_layout_at(corner_x, corner_z)
-                    if layout_info:
-                        final_x = center_x + MANUAL_OFFSET_X
-                        final_z = center_z + MANUAL_OFFSET_Z
-                        # Sample at final (offset) block center for consistent Y
-                        block_base_y = self.get_terrain_height(final_x, final_z)
-                        block_position = (float(final_x), float(block_base_y), float(final_z))
-                        block_yaw = float(layout_info['block_yaw_degrees'])
-                        city_level = int(layout_info['city_level'])
-                        layout_guid = layout_info['layout_guid']
-                        all_blocks.append({
-                            'pixel_coord': (px, py),
-                            'world_position': block_position,
-                            'layout_guid': layout_guid,
-                            'yaw_degrees': block_yaw,
-                            'city_level': city_level,
-                        })
-        return all_blocks
-    
-    # --- Public-facing wrappers for pre-processed data ---
-    def get_all_city_blocks(self): return self.city_blocks
-    def get_all_static_prefabs(self):
-        """Returns a formatted list of all static prefabs placed on the map."""
-        static_prefabs_node = self.map_data.get('StaticPrefabs', {}).get('StaticPrefab', [])
-        if not isinstance(static_prefabs_node, list):
-            static_prefabs_node = [static_prefabs_node] if static_prefabs_node else []
-        return [
-            {
-                'prefab_id': p.get('prefab'),
-                'position': [float(c) for c in p.get('globalPos', [0, 0, 0])],
-                'rotation_euler': [float(r) for r in p.get('rotation', [0, 0, 0])],
-            }
-            for p in static_prefabs_node
-        ]
-    
-    def get_all_bases(self):
-        """
-        Returns a list of all bases (airbases, carriers, FOBs) on the map.
-        
-        Returns:
-            list: List of base dictionaries with keys: id, name, prefab_type, position, rotation, footprint
-        """
-        return self.bases.copy()
-    
-    def get_base_by_id(self, base_id):
-        """
-        Finds a base by its ID.
-        
-        Args:
-            base_id: The base's ID from the VTM file
-        
-        Returns:
-            dict: Base information dictionary, or None if not found
-        """
-        for base in self.bases:
-            if base['id'] == base_id:
-                return base.copy()
-        return None
-    
-    def get_base_by_name(self, name):
-        """
-        Finds a base by its name (case-insensitive partial match).
-        
-        Args:
-            name: The base name to search for
-        
-        Returns:
-            dict: Base information dictionary, or None if not found
-        """
-        name_lower = name.lower()
-        for base in self.bases:
-            if name_lower in base['name'].lower():
-                return base.copy()
-        return None
-    
-    def get_nearest_base(self, world_x, world_z):
-        """
-        Finds the nearest base to a given world coordinate.
-        
-        Args:
-            world_x: X coordinate
-            world_z: Z coordinate
-        
-        Returns:
-            tuple: (base_dict, distance) or (None, None) if no bases exist
-        """
-        if not self.bases:
-            return None, None
-        
-        point = np.array([world_x, world_z])
-        nearest_base = None
-        min_distance = float('inf')
-        
-        for base in self.bases:
-            base_pos = np.array([base['position'][0], base['position'][2]])
-            distance = np.linalg.norm(point - base_pos)
-            if distance < min_distance:
-                min_distance = distance
-                nearest_base = base
-        
-        return nearest_base.copy(), float(min_distance)
-    
-    # Unchanged public methods
-    def get_city_density(self, world_x, world_z):
-        try:
-            px, py = self._world_to_pixel_vtstyle_global(world_x, world_z)
-        except Exception:
-            px, py = self._world_to_pixel_bankers_rounding(world_x, world_z)
-
+    def _city_pixel_g(self, px, py):
+        """G of pixel if its 2x2 quad is all city (VTMapCities rule), else 0."""
         if px < 0 or py < 0 or px >= self.hm_width - 1 or py >= self.hm_height - 1:
             return 0.0
+        g = self.heightmap_data_g
+        quad = (g[py, px], g[py, px + 1], g[py + 1, px + 1], g[py + 1, px])
+        return float(quad[0]) if min(quad) > 0.1 else 0.0
 
-        try:
-            g1 = self.heightmap_data_g[py, px]
-            g2 = self.heightmap_data_g[py, px + 1]
-            g3 = self.heightmap_data_g[py + 1, px + 1]
-            g4 = self.heightmap_data_g[py + 1, px]
-            return g1 if (g1 > 0.1 and g2 > 0.1 and g3 > 0.1 and g4 > 0.1) else 0.0
-        except IndexError:
-            return 0.0
-    def get_city_layout_at(self, world_x, world_z):
-        density = self.get_city_density(world_x, world_z)
+    def _city_layout_at_pixel(self, px, py):
+        density = self._city_pixel_g(px, py)
         if density <= 0.1:
             return None
-
-        try:
-            px, py = self._world_to_pixel_vtstyle_global(world_x, world_z)
-        except Exception:
-            px, py = self._world_to_pixel_bankers_rounding(world_x, world_z)
-
-        city_level = np.clip(int(np.floor((density - 0.2) / 0.8 * 5.0)), 0, 4)
-        level_key = str(city_level)
-        available_layouts = self.layouts_by_level.get(level_key)
-        if not available_layouts:
+        city_level = int(np.clip(np.floor((density - 0.2) / 0.8 * 5.0), 0, 4))
+        layouts = self.layouts_by_level.get(str(city_level))
+        if not layouts:
             return None
-
-        noise_px = px % self.noise_width
-        noise_py = py % self.noise_height
-        try:
-            noise_val_r = self.noise_texture_data[noise_py, noise_px]
-        except IndexError:
+        noise = self.noise_texture_data[py % self.noise_height, px % self.noise_width]
+        layout_guid = layouts[int(np.clip(np.floor(noise * len(layouts)), 0, len(layouts) - 1))]
+        surfaces = self.layout_data_db.get(layout_guid)
+        if surfaces is None:
             return None
-
-        layout_index = np.clip(
-            int(np.floor(noise_val_r * float(len(available_layouts)))),
-            0,
-            len(available_layouts) - 1,
-        )
-        layout_guid = available_layouts[layout_index]
-        layout_surfaces = self.layout_data_db.get(layout_guid)
-        if layout_surfaces is None:
-            return None
-
-        block_yaw = 0.0
+        # CityBuilderPixel.SetRotation
         if px % 2 == 0:
-            if py % 2 != 0:
-                block_yaw = 90.0
-        elif py % 2 == 0:
-            block_yaw = -90.0
+            yaw = 0.0 if py % 2 == 0 else 90.0
         else:
-            block_yaw = 180.0
+            yaw = -90.0 if py % 2 == 0 else 180.0
+        return {'layout_guid': layout_guid, 'surfaces': surfaces, 'block_yaw_degrees': yaw,
+                'city_level': city_level, 'pixel_coords': (px, py)}
 
-        return {
-            'layout_guid': layout_guid,
-            'surfaces': layout_surfaces,
-            'block_yaw_degrees': block_yaw,
-            'city_level': city_level,
-            'pixel_coords': (px, py),
-        }
+    def _block_pivot(self, px, py):
+        """World position of the block's RotationTf (origin of the layout bounds)."""
+        vx, vz = px * METERS_PER_PIXEL, py * METERS_PER_PIXEL
+        return np.array([vx, self.get_terrain_height(vx, vz), vz]) + CITY_PIXEL_CENTER
 
-# --- Main Execution Block (Example Usage & Test) ---
-if __name__ == "__main__":
-    MAP_FOLDER = r"test_map/hMap2"
-    LAYOUT_DB_PATH = 'Resources/city_layouts_database.json'
-    INDIVIDUAL_DB_PATH = 'Resources/individual_prefabs_database.json'
-    OUTPUT_CITY_JSON = 'generated_city_blocks.json'
-    OUTPUT_STATIC_JSON = 'generated_static_prefabs.json'
+    def get_city_density(self, world_x, world_z):
+        return self._city_pixel_g(*self._world_to_pixel(world_x, world_z))
 
-    try:
-        # Update constructor to include the new database path
-        calculator = TerrainCalculator(MAP_FOLDER, LAYOUT_DB_PATH, INDIVIDUAL_DB_PATH)
+    def get_city_layout_at(self, world_x, world_z):
+        return self._city_layout_at_pixel(*self._world_to_pixel(world_x, world_z))
 
-        # --- Generate and save all city blocks ---
-        print("\nGetting pre-processed city block data...")
-        generated_blocks_data = calculator.get_all_city_blocks()
-        with open(OUTPUT_CITY_JSON, 'w') as f:
-            json.dump(generated_blocks_data, f, indent=2)
-        print(f"Saved data for {len(generated_blocks_data)} city blocks to '{OUTPUT_CITY_JSON}'")
-        
-        # --- Generate and save all static prefabs ---
-        print("\nGetting pre-processed static prefab data...")
-        generated_static_data = calculator.get_all_static_prefabs()
-        with open(OUTPUT_STATIC_JSON, 'w') as f:
-            json.dump(generated_static_data, f, indent=2)
-        print(f"Saved data for {len(generated_static_data)} static prefabs to '{OUTPUT_STATIC_JSON}'")
+    def _generate_all_city_blocks(self):
+        g = self.heightmap_data_g
+        quad = (g[:-1, :-1] > 0.1) & (g[:-1, 1:] > 0.1) & (g[1:, 1:] > 0.1) & (g[1:, :-1] > 0.1)
+        blocks = []
+        for py, px in zip(*np.nonzero(quad)):
+            info = self._city_layout_at_pixel(int(px), int(py))
+            if info:
+                blocks.append({'pixel_coord': (int(px), int(py)),
+                               'world_position': tuple(float(v) for v in self._block_pivot(px, py)),
+                               'layout_guid': info['layout_guid'], 'yaw_degrees': info['block_yaw_degrees'],
+                               'city_level': info['city_level']})
+        return blocks
 
-        # --- Test get_smart_placement on various locations ---
-        if generated_static_data:
-            print("\n--- Testing get_smart_placement ---")
-            
-            # Test 1: On a known static prefab
-            first_static = generated_static_data[0]
-            test_pos = first_static['position']
-            test_x, test_z = test_pos[0], test_pos[2]
-            print(f"\nQuerying at static prefab location: ({test_x:.2f}, {test_z:.2f})")
-            placement = calculator.get_smart_placement(test_x, test_z, 0)
-            print(f" -> Result Type: {placement.get('type')}")
-            if placement.get('type') == 'static_prefab_roof':
-                print("    SUCCESS! Correctly detected a static prefab roof.")
-            else:
-                print(f"   WARNING! Expected 'static_prefab_roof', but got '{placement.get('type')}'.")
-            
-            # Test 2: On a known road
-            road_test_x, road_test_z = 53750.0, 118750.0
-            print(f"\nQuerying at road location: ({road_test_x:.2f}, {road_test_z:.2f})")
-            placement = calculator.get_smart_placement(road_test_x, road_test_z, 0)
-            print(f" -> Result Type: {placement.get('type')}")
-            if placement.get('type') == 'road':
-                print("    SUCCESS! Correctly detected a road.")
-            else:
-                print(f"   WARNING! Expected 'road', but got '{placement.get('type')}'.")
+    def get_all_city_blocks(self):
+        return self.city_blocks
 
-    except FileNotFoundError as e:
-        print(f"\nFile Error: {e}")
-    except ValueError as e:
-        print(f"\nValue Error: {e}")
-    except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
-        traceback.print_exc()
+    # --- Roads ---
+    def _process_all_roads(self):
+        """(start, end) polylines for Bezier roads and the procedural city street grid.
 
+        Also builds `road_graph_segments` (Bezier segment id -> points/length/links), `road_segment_ids`
+        (road id per polyline, None for city streets) and `bridge_segments`.
+        """
+        segments, ids, bridges = [], [], []
+        roads = self.map_data.get('BezierRoads', {})
+        self.road_graph_segments = {}
+        for chunk in _as_list(roads.get('Chunk')):
+            for seg in _as_list(chunk.get('Segment')):
+                s, m, e = (np.array(seg[k], dtype=float) for k in ('s', 'm', 'e'))
+                pts = [get_bezier_point(s, m, e, t) for t in np.linspace(0, 1, BEZIER_SAMPLES)]
+                is_bridge = seg.get('bridge') is True
+                self.road_graph_segments[seg['id']] = {'points': pts, 'length': float(seg.get('length', 0.0)),
+                                                       'ns': seg.get('ns'), 'ps': seg.get('ps'), 'is_bridge': is_bridge}
+                for a, b in zip(pts, pts[1:]):
+                    segments.append((a, b))
+                    ids.append(seg['id'])
+                    if is_bridge:
+                        bridges.append({'start': a, 'end': b, 'road_id': seg['id']})
+        self.road_intersections = [[int(i) for i in _as_list(x.get('segments'))] for x in _as_list(roads.get('Intersection'))]
+        self.bridge_segments = bridges
 
+        # ponytail: city streets are approximated as lines between block pivots; the real geometry lives in the layout meshes.
+        pos = {b['pixel_coord']: np.array(b['world_position']) for b in self.city_blocks}
+        for (px, py), a in pos.items():
+            b, c, d = pos.get((px + 1, py)), pos.get((px, py + 1)), pos.get((px + 1, py + 1))
+            if b is None or c is None or d is None:
+                continue
+            if py % 2:
+                segments.append((np.array([a[0], 0, (a[2] + c[2]) / 2]), np.array([b[0], 0, (b[2] + d[2]) / 2])))
+                ids.append(None)
+            if px % 2:
+                segments.append((np.array([(a[0] + b[0]) / 2, 0, a[2]]), np.array([(c[0] + d[0]) / 2, 0, c[2]])))
+                ids.append(None)
+        self.road_segment_ids = ids
+        self._road_is_bezier = np.array([i is not None for i in ids], dtype=bool)
+        return segments
+
+    def get_all_bridges(self):
+        return self.bridge_segments
+
+    def nearest_road(self, world_x, world_z, bezier_only=False):
+        """Closest road polyline: {'segment_index', 'position' (x, y, z), 'distance', 'road_id', 'is_bridge'} or None."""
+        if not len(self.road_segments) or (bezier_only and not self._road_is_bezier.any()):
+            return None
+        p = np.array([world_x, world_z])
+        d = self._road_p2 - self._road_p1
+        len_sq = np.einsum('ij,ij->i', d, d)
+        t = np.clip(np.einsum('ij,ij->i', p - self._road_p1, d) / np.where(len_sq == 0, 1, len_sq), 0, 1)
+        closest = self._road_p1 + t[:, None] * d
+        dist_sq = np.einsum('ij,ij->i', closest - p, closest - p)
+        if bezier_only:
+            dist_sq = np.where(self._road_is_bezier, dist_sq, np.inf)
+        i = int(np.argmin(dist_sq))
+        road_id = self.road_segment_ids[i]
+        is_bridge = road_id is not None and self.road_graph_segments[road_id]['is_bridge']
+        if is_bridge:
+            a, b = self.road_segments[i]
+            y = float(a[1] + t[i] * (b[1] - a[1]))
+        else:
+            y = self.get_terrain_height(closest[i, 0], closest[i, 1])
+        return {'segment_index': i, 'position': (float(closest[i, 0]), y, float(closest[i, 1])),
+                'distance': float(np.sqrt(dist_sq[i])), 'road_id': road_id, 'is_bridge': is_bridge}
+
+    def is_on_road(self, world_x, world_z, tolerance=10.0):
+        hit = self.nearest_road(world_x, world_z)
+        return bool(hit and hit['distance'] < tolerance)
+
+    def _road_neighbors(self):
+        if getattr(self, '_neighbors_cache', None) is None:
+            nb = {sid: set() for sid in self.road_graph_segments}
+            for sid, seg in self.road_graph_segments.items():
+                for n in (seg['ns'], seg['ps']):
+                    if n in nb:
+                        nb[sid].add(n)
+                        nb[n].add(sid)
+            for group in self.road_intersections:
+                for a in group:
+                    if a in nb:
+                        nb[a].update(b for b in group if b != a and b in nb)
+            # Many segments only share an endpoint (no ns/ps link), so also join coincident endpoints.
+            ends = [(sid, p) for sid, seg in self.road_graph_segments.items() for p in (seg['points'][0], seg['points'][-1])]
+            if ends:
+                for i, j in cKDTree([p for _, p in ends]).query_pairs(r=2.0):
+                    a, b = ends[i][0], ends[j][0]
+                    if a != b:
+                        nb[a].add(b)
+                        nb[b].add(a)
+            self._neighbors_cache = nb
+        return self._neighbors_cache
+
+    def get_road_route(self, start_xz, end_xz):
+        """Shortest path over the Bezier road network (Dijkstra on segment ids). Returns [(x, y, z), ...] or []."""
+        start = self.nearest_road(*start_xz, bezier_only=True)
+        end = self.nearest_road(*end_xz, bezier_only=True)
+        if not start or not end:
+            return []
+        start_id, end_id = start['road_id'], end['road_id']
+        neighbors = self._road_neighbors()
+        dist, prev, queue = {start_id: 0.0}, {}, [(0.0, start_id)]
+        while queue:
+            d, sid = heapq.heappop(queue)
+            if sid == end_id:
+                break
+            if d > dist.get(sid, np.inf):
+                continue
+            for n in neighbors[sid]:
+                nd = d + self.road_graph_segments[n]['length']
+                if nd < dist.get(n, np.inf):
+                    dist[n], prev[n] = nd, sid
+                    heapq.heappush(queue, (nd, n))
+        if end_id not in dist:
+            return []
+        chain = [end_id]
+        while chain[-1] != start_id:
+            chain.append(prev[chain[-1]])
+        chain.reverse()
+
+        route = []
+        for sid in chain:
+            pts = self.road_graph_segments[sid]['points']
+            if route and np.linalg.norm(route[-1] - pts[-1]) < np.linalg.norm(route[-1] - pts[0]):
+                pts = pts[::-1]  # segment stored in the opposite direction
+            route.extend(pts if not route else pts[1:])
+        return [(float(p[0]), float(p[1]), float(p[2])) for p in route]
+
+    # --- Placement ---
+    def get_smart_placement(self, world_x, world_z, yaw_degrees):
+        """Placement on a static prefab roof, bridge/road, city roof, or terrain (in that priority)."""
+        best_y, best_name = -np.inf, None
+        for s in self.static_surfaces:
+            b = s['world_bounds']
+            if s['is_spawnable'] and b[0] <= world_x <= b[3] and b[2] <= world_z <= b[5] and b[4] > best_y:
+                best_y, best_name = b[4], f"{s['prefab_name']}/{s['name']}"
+        if best_name:
+            return {'type': 'static_prefab_roof', 'position': (world_x, best_y, world_z),
+                    'rotation': (0.0, yaw_degrees, 0.0), 'snapped_to_building': best_name}
+
+        road = self.nearest_road(world_x, world_z)
+        if road and road['distance'] < 10.0:
+            if road['is_bridge']:
+                return {'type': 'bridge', 'position': (world_x, road['position'][1], world_z), 'rotation': (0.0, yaw_degrees, 0.0)}
+            return {**self.get_asset_placement(world_x, world_z, yaw_degrees), 'type': 'road'}
+
+        px, py = self._world_to_pixel(world_x, world_z)
+        layout = self._city_layout_at_pixel(px, py)
+        if layout:
+            pivot = self._block_pivot(px, py)
+            rot = R.from_euler('Y', layout['block_yaw_degrees'], degrees=True).as_matrix()
+            best_y, best_name = -np.inf, None
+            for s in layout['surfaces']:
+                b = s.get('bounds_rel_layout', [])
+                if len(b) != 6 or not s.get('is_spawnable'):
+                    continue
+                corners = _box_corners(b) @ rot.T + pivot
+                lo, hi = corners.min(axis=0), corners.max(axis=0)
+                if lo[0] <= world_x <= hi[0] and lo[2] <= world_z <= hi[2] and hi[1] > best_y:
+                    best_y, best_name = hi[1], s.get('go_name', 'N/A')
+            if best_name:
+                return {'type': 'city_roof', 'position': (world_x, float(best_y), world_z),
+                        'rotation': (0.0, yaw_degrees, 0.0), 'snapped_to_building': best_name}
+
+        return {**self.get_asset_placement(world_x, world_z, yaw_degrees), 'type': 'terrain'}

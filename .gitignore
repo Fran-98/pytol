@@ -1,34 +1,14 @@
-# Custom 
-
-test_scenarios
-test_map
-GameData
-GameDataComplete
-generated_city_blocks.json
-generated_static_prefabs.json
-test_campaings
-test_ideas
-test_missions
-plans_and_tracking
-testing_scripts
-*test_missions*
-*tmp*
-tools
-*.venv*
-CODEBASE_REVIEW.md
-BACKLOG.md
-
-# Example build outputs
+# Local, not part of the library
+test_missions/
 examples/build/
-# Ignore demo artifacts produced by local generation scripts
 examples/output/
-examples/generate_demo.py
-docs/waiting_for_aproval_docs/
+docs/BACKLOG.md
+*.venv*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-test_scripts
 
 # C extensions
 *.so

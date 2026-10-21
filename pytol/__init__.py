@@ -1,4 +1,4 @@
-__version__ = "0.2.0"
+__version__ = "0.5.0"  # single source: pyproject reads it via [tool.hatch.version]
 
 # --- Core Mission Building ---
 from .parsers.vts_builder import Mission, NATO_PHONETIC_ALPHABET
@@ -37,14 +37,6 @@ from .classes.conditionals import ConditionalTree
 from .terrain.terrain_calculator import TerrainCalculator
 from .terrain.mission_terrain_helper import MissionTerrainHelper
 
-# --- Procedural Engine ---
-try:
-    from .procedural import ProceduralMissionSpec, ProceduralMissionEngine
-except ImportError:
-    # Legacy procedural engine not available (new pipeline in use)
-    ProceduralMissionSpec = None
-    ProceduralMissionEngine = None
-
 # --- Equipment System ---
 from .resources.equipment import (
     EquipmentBuilder,
@@ -79,26 +71,5 @@ from .misc.logger import create_logger
 _logger = create_logger(verbose=False, name="pytol")
 _logger.info(f"Pytol {__version__} loaded.")
 
-# --- Visualization (Optional) ---
-# Import 2D visualization (matplotlib)
-try:
-    from .visualization import Map2DVisualizer, save_mission_map
-    _viz2d_available = True
-except ImportError:
-    _viz2d_available = False
-    Map2DVisualizer = None
-    save_mission_map = None
-
-# Import 3D visualization (pyvista)
-try:
-    from .visualization import MissionVisualizer, TerrainVisualizer
-    _viz3d_available = True
-except ImportError:
-    _viz3d_available = False
-    MissionVisualizer = None
-    TerrainVisualizer = None
-
-if _viz2d_available:
-    _logger.info("  -> 2D Visualization available (matplotlib detected)")
-if _viz3d_available:
-    _logger.info("  -> 3D Visualization available (pyvista detected)")
+# --- Visualization (optional extras; stubs raise a helpful ImportError when the backend is missing) ---
+from .visualization import Map2DVisualizer, save_mission_map, MissionVisualizer, TerrainVisualizer

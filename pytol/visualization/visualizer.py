@@ -10,6 +10,7 @@ import pyvista as pv
 import os
 from typing import List, Tuple
 from ..misc.logger import create_logger
+from ..terrain.terrain_calculator import unity_euler_to_matrix
 
 
 class TerrainVisualizer:
@@ -105,7 +106,7 @@ class TerrainVisualizer:
             prefab_surfaces = self.calculator.individual_prefabs_db.get(db_key, [])
             pos = np.array(prefab_data['position'])
             rot = prefab_data['rotation_euler']
-            prefab_rot_matrix = R.from_euler('yxz', [rot[1], rot[0], rot[2]], degrees=True).as_matrix()
+            prefab_rot_matrix = unity_euler_to_matrix(rot)
             
             for surface in prefab_surfaces:
                 bounds_rel = np.array(surface.get('bounds', []))

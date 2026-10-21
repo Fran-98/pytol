@@ -18,12 +18,7 @@ import importlib.util
 MATPLOTLIB_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
 PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
 
-# Check for pyvista (3D visualization) - test actual import
-try:
-    import pyvista
-    PYVISTA_AVAILABLE = True
-except ImportError:
-    PYVISTA_AVAILABLE = False
+PYVISTA_AVAILABLE = importlib.util.find_spec("pyvista") is not None
 
 # Import available visualizers
 __all__ = []

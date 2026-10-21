@@ -82,9 +82,6 @@ class Map2DVisualizer:
             'waypoints': '#FF6600',        # Orange for waypoints
             'objectives': '#9900CC',       # Purple for objectives
             'airbases': '#FFD700',         # Gold for airbases
-            'friendly_territory': '#0044AA',    # Blue for friendly territory
-            'enemy_territory': '#AA0000',       # Red for enemy territory
-            'neutral_territory': '#808080',     # Gray for neutral territory
         }
     
     def _create_terrain_layer(self, ax, style: str = 'contour', alpha: float = 0.7):
@@ -563,145 +560,6 @@ class Map2DVisualizer:
                 # No position found - log warning but don't draw
                 self.logger.debug(f"Objective '{obj_name}' has no position information")
     
-    def _create_territories_layer(self, ax, world_state=None):
-        """Create territories layer showing friendly, enemy, and neutral zones."""
-        # Get world state from mission if available
-        if world_state is None:
-            if hasattr(self.mission, 'world_state'):
-                world_state = self.mission.world_state
-            elif hasattr(self.mission, 'wsm'):
-                world_state = self.mission.wsm
-            else:
-                return
-        
-        if not hasattr(world_state, 'territory_zones'):
-            return
-        
-        self.logger.info("Drawing territory zones...")
-        
-        territory_colors = {
-            'friendly': self.colors['friendly_territory'],
-            'enemy': self.colors['enemy_territory'],
-            'neutral': self.colors['neutral_territory']
-        }
-        
-        territory_labels = {
-            'friendly': 'Friendly Territory',
-            'enemy': 'Enemy Territory',
-            'neutral': 'Neutral Territory'
-        }
-        
-        from pytol.misc.math_utils import is_position_in_circle
-        
-        # Draw territories in order: friendly, enemy, neutral
-        for territory_type in ['friendly', 'enemy', 'neutral']:
-            zones = world_state.territory_zones.get(territory_type, [])
-            if not zones:
-                continue
-            
-            color = territory_colors.get(territory_type, '#808080')
-            label = territory_labels.get(territory_type, territory_type)
-            labeled = False
-            
-            for zone in zones:
-                if zone.get('type') == 'circle':
-                    center = zone['center']
-                    radius = zone['radius']
-                    
-                    # Draw filled circle
-                    circle = patches.Circle(
-                        center, radius,
-                        color=color, alpha=0.2, edgecolor=color, linewidth=2,
-                        label=label if not labeled else "", zorder=2
-                    )
-                    ax.add_patch(circle)
-                    labeled = True
-                    
-                elif zone.get('type') == 'polygon':
-                    vertices = zone.get('vertices', [])
-                    if len(vertices) >= 3:
-                        # Close the polygon if not already closed
-                        if vertices[0] != vertices[-1]:
-                            vertices = vertices + [vertices[0]]
-                        
-                        # Draw filled polygon
-                        polygon = patches.Polygon(
-                            vertices,
-                            color=color, alpha=0.2, edgecolor=color, linewidth=2,
-                            label=label if not labeled else "", zorder=2
-                        )
-                        ax.add_patch(polygon)
-                        labeled = True
-    
-    def _create_key_points_layer(self, ax, world_state=None):
-        """Create layer showing mission key points (strategic locations)."""
-        # Get world state from mission if available
-        if world_state is None:
-            if hasattr(self.mission, 'world_state'):
-                world_state = self.mission.world_state
-            elif hasattr(self.mission, 'wsm'):
-                world_state = self.mission.wsm
-            else:
-                return
-        
-        # Try to get mission key points from assets
-        key_points = None
-        try:
-            if hasattr(world_state, 'assets'):
-                key_points_asset = world_state.assets.get('mission_key_points')
-                if key_points_asset and isinstance(key_points_asset, dict):
-                    key_points = key_points_asset.get('points')
-        except Exception:
-            pass
-        
-        if not key_points:
-            return
-        
-        self.logger.info(f"Drawing {len(key_points)} mission key points...")
-        
-        # Different markers/colors for different point types
-        point_styles = {
-            'objective': {'marker': '*', 'color': '#9900CC', 'size': 150},
-            'threat': {'marker': 'X', 'color': '#FF0000', 'size': 120},
-            'defense': {'marker': 's', 'color': '#0066CC', 'size': 100},
-            'staging': {'marker': '^', 'color': '#00AA00', 'size': 100},
-        }
-        
-        for point_id, point_info in key_points.items():
-            pos = point_info.get('position')
-            if not pos or len(pos) < 3:
-                continue
-            
-            point_type = point_info.get('type', 'objective')
-            mission_role = point_info.get('mission_role', '')
-            radius = point_info.get('radius', 5000)
-            priority = point_info.get('priority', 5)
-            
-            # Get style for this point type
-            style = point_styles.get(point_type, point_styles['objective'])
-            
-            # Draw influence radius circle (semi-transparent)
-            circle = patches.Circle(
-                (pos[0], pos[2]), radius,
-                color=style['color'], alpha=0.1, edgecolor=style['color'], 
-                linewidth=1, linestyle='--', zorder=1
-            )
-            ax.add_patch(circle)
-            
-            # Draw key point marker
-            ax.scatter(pos[0], pos[2], s=style['size'], c=style['color'],
-                      marker=style['marker'], edgecolors='black', linewidth=1.5,
-                      label=f'Key Point ({point_type})' if point_id == list(key_points.keys())[0] else "",
-                      zorder=10)
-            
-            # Label with priority/role
-            label_text = f"{mission_role}\nP{priority}" if mission_role else f"P{priority}"
-            ax.annotate(label_text, (pos[0], pos[2]),
-                       xytext=(5, 5), textcoords='offset points',
-                       fontsize=7, fontweight='bold',
-                       bbox=dict(boxstyle="round,pad=0.2", 
-                                facecolor='white', alpha=0.8, edgecolor=style['color']))
-    
     def save_terrain_overview(self, filename: str, style: str = 'contour') -> str:
         """
         Save a terrain-only overview image.
@@ -720,9 +578,8 @@ class Map2DVisualizer:
         # Create terrain layer
         cs = self._create_terrain_layer(ax, style=style)
         
-        # Add roads, territories, cities
+        # Add roads, cities
         self._create_roads_layer(ax)
-        self._create_territories_layer(ax)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         
@@ -783,16 +640,7 @@ class Map2DVisualizer:
             # Make terrain more visible with higher alpha and ensure it's background layer
             cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.85)
         
-        # Get world state for layers that need it
-        world_state = None
-        if hasattr(self.mission, 'world_state'):
-            world_state = self.mission.world_state
-        elif hasattr(self.mission, 'wsm'):
-            world_state = self.mission.wsm
-        
         self._create_roads_layer(ax)
-        self._create_territories_layer(ax, world_state=world_state)
-        self._create_key_points_layer(ax, world_state=world_state)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         self._create_units_layer(ax)
@@ -1103,7 +951,6 @@ class Map2DVisualizer:
             # Make terrain more visible with higher alpha and ensure it's background layer
             cs = self._create_terrain_layer(ax, style=terrain_style, alpha=0.85)
         self._create_roads_layer(ax)
-        self._create_territories_layer(ax)
         self._create_cities_layer(ax)
         self._create_static_prefabs_layer(ax)
         self._create_units_layer(ax)

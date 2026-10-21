@@ -1,54 +1,57 @@
 # Mission Creation Guide
 
-This guide covers how to create VTOL VR missions programmatically using Pytol. For a system-by-system inventory of everything the library serializes, see the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
+This guide covers how to create VTOL VR missions programmatically using Pytol.
 
 ## Quick Start
 
 ```python
-from pytol import Mission
+import os
+from pytol import Mission, Waypoint, Trigger, create_unit, create_objective
+from pytol.classes.actions import SystemActions
 
-# 1. Create a new mission
+VTOL_VR_PATH = os.environ.get("VTOL_VR_DIR", "C:/Program Files (x86)/Steam/steamapps/common/VTOL VR")
+
+# --- 1. Mission on a custom map (loads terrain, cities, roads and bases) ---
 mission = Mission(
-    scenario_name="Strike on Enemy Airbase",
-    scenario_id="strike_mission_1",
-    description="Destroy enemy aircraft at their forward operating base.",
-    vehicle="F/A-26B",
+    scenario_name="Pytol Quickstart",
+    scenario_id="pytol_quickstart",
+    description="Fly to the landing zone and destroy the tank.",
+    vehicle="AV-42C",
     map_id="hMap2",
-    vtol_directory=r"C:\Program Files (x86)\Steam\steamapps\common\VTOL VR",
-    verbose=True
+    vtol_directory=VTOL_VR_PATH,
 )
+tc, helper = mission.tc, mission.helper
 
-# 2. Access the terrain calculator (automatically created)
-tc = mission.tc  # TerrainCalculator instance
-helper = mission.helper  # MissionTerrainHelper instance
+# --- 2. Terrain queries: a flat landing zone near the map center ---
+cx = cz = tc.total_map_size_meters / 2
+zones = helper.find_flat_landing_zones(cx, cz, search_radius=5000, min_area_radius=30)
+lz = zones[0] if zones else (cx, tc.get_terrain_height(cx, cz), cz)
 
-# 3. Add a player spawn
-mission.add_allied_spawn(
-    global_position=(100000, 500, 50000),
-    heading=0,
-    unit_name="Player"
-)
+# --- 3. Waypoint, units and objectives ---
+lz_wpt = Waypoint(name="LZ Alpha", global_point=list(lz))
+mission.add_waypoint(lz_wpt)
 
-# 4. Add enemy units with terrain-aware placement
-enemy_pos = (105000, 0, 52000)
-placement = tc.get_smart_placement(enemy_pos[0], enemy_pos[2], yaw_degrees=90)
+player = create_unit("PlayerSpawn", "Player", "Allied", [lz[0] - 8000, lz[1] + 1500, lz[2]], [0, 90, 0])
+mission.add_unit(player, placement="airborne")
+tank = create_unit("enemyMBT1", "Tank", "Enemy", [lz[0] + 500, 0, lz[2] + 500], [0, 180, 0])
+tank_id = mission.add_unit(tank, placement="ground")  # snapped to terrain/roads/roofs
 
-mission.add_enemy_unit(
-    global_position=placement['position'],
-    rotation=placement['rotation'],
-    unit_name="Enemy Fighter",
-    unit_type="EF-24"
-)
+fly = create_objective("Fly_To", 0, "Go To LZ", "Fly to LZ Alpha.", waypoint=lz_wpt, trigger_radius=1500)
+kill = create_objective("Destroy", 1, "Destroy Tank", "Destroy the tank near the LZ.", prereqs=[fly],
+                        targets=[tank_id], min_required=1)
+mission.add_objective(fly)
+mission.add_objective(kill)
 
-# 5. Add an objective
-mission.add_destroy_objective(
-    target_unit_name="Enemy Fighter",
-    objective_name="Destroy Enemy Aircraft",
-    required=True
-)
+# --- 4. Events: actions come from the game's own [VTEvent] list ---
+mission.add_trigger_event(Trigger(
+    id=0, name="Near LZ", trigger_type="Proximity", waypoint=lz_wpt, radius=3000,
+    spherical_radius=False, trigger_mode="Player", proxy_mode="OnEnter",
+    event_targets=[SystemActions().display_message("Tank spotted near the LZ!", 5.0)]))
+mission.rtb_wpt_id = lz_wpt
+mission.add_briefing_note("Proceed to LZ Alpha. Expect light resistance.")
 
-# 6. Save the mission
-mission.save_mission("./output")  # Creates: ./output/strike_mission_1/
+# --- 5. Save (writes <folder>/pytol_quickstart/pytol_quickstart.vts plus the map) ---
+print("Saved to:", mission.save_mission(os.path.join(VTOL_VR_PATH, "CustomScenarios")))
 ```
 
 **Note:** `save_mission()` creates a folder structure with the mission file and map data inside.
@@ -61,11 +64,11 @@ mission.save_mission("./output")  # Creates: ./output/strike_mission_1/
 
 ## Terrain Integration Workflow
 
-Pytol mirrors VTOL VR's terrain pipeline on mission load. Use the shared `TerrainCalculator` and `MissionTerrainHelper` instances exposed by `Mission` instead of sampling ad-hoc. The terrain internals are described in detail in Section 2 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
+Pytol mirrors VTOL VR's terrain pipeline on mission load. Use the shared `TerrainCalculator` and `MissionTerrainHelper` instances exposed by `Mission` instead of sampling ad-hoc. The terrain internals are described in [Terrain Behavior](terrain_behavior.md).
 
 1. **Baseline placement:** `mission.tc.get_asset_placement(x, z, yaw)` returns a terrain-aligned `(position, rotation)` tuple that reproduces the editor’s snap-to-ground.
 2. **Smart placement:** `mission.tc.get_smart_placement(x, z, yaw)` inspects static prefabs, road splines, and procedural city tiles extracted from the Unity project. It will attach vehicles to roads, parking pads, rooftops, or open terrain exactly like the in-game placement gizmos.
-3. **High-level searches:** `mission.helper` exposes tactical queries (`find_landing_zones`, `find_convoy_route`, `find_observation_post`, `has_line_of_sight`) that operate on the same cached meshes. These helpers return scored candidates you can feed directly into unit constructors.
+3. **High-level searches:** `mission.helper` exposes tactical queries (`find_flat_landing_zones`, `get_road_path`, `find_observation_post`, `has_line_of_sight`) built on the same terrain data.
 4. **Base and runway data:** `mission.add_unit_at_base_spawn(...)` pulls spawn pads from the packaged base spawn database, guaranteeing taxi paths and runway headings line up with Unity’s baked data.
 
 Always reuse these helpers when building new features—hand-authored coordinates drift over time as Unity assets change, while the calculators stay synchronized with `E:\VTOL VR UNITY\Assets`.
@@ -618,7 +621,7 @@ print("Mission created successfully!")
 
 ## Resources
 
-Resources allow you to include custom audio, imagery, and other mission assets. Pytol registers each asset in the ResourceManifest and copies files into the mission folder when you call `save_mission()`. See Section 3 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md) for the backing database loaders and manifest flow.
+Resources allow you to include custom audio, imagery, and other mission assets. Pytol registers each asset in the ResourceManifest and copies files into the mission folder when you call `save_mission()`.
 
 ### Adding Audio Briefings
 
@@ -850,7 +853,7 @@ mission.add_random_event(re)
 
 ## Global Values & Conditionals
 
-Use global values to track mission state and gate logic with the same mechanisms the VTOL VR editor provides. Additional context on conditional classes and global action helpers lives in Sections 6–7 of the [Core Mission Systems Implementation Reference](core_systems_implementation.md).
+Use global values to track mission state and gate logic with the same mechanisms the VTOL VR editor provides.
 
 ```python
 from pytol.classes.mission_objects import GlobalValue, Trigger

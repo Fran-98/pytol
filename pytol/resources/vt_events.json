@@ -1,0 +1,2610 @@
+{
+ "classes": {
+  "AIAWACSSpawn": {
+   "base": "AIAircraftSpawn",
+   "events": {
+    "Report Contacts To Groups": {
+     "method": "SetReportToGroups",
+     "params": [
+      {
+       "name": "selection",
+       "type": "UnitGroupSelection"
+      }
+     ],
+     "tooltip": "Select unit groups to allow this AWACS to report targets to friendlies outside of its own group."
+    },
+    "Set AWACS Comms": {
+     "method": "SetAwacsComms",
+     "params": [
+      {
+       "name": "enabled",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the AWACS can be contacted for support."
+    }
+   }
+  },
+  "AIAirTankerSpawn": {
+   "base": "AIAircraftSpawn",
+   "events": {}
+  },
+  "AIAircraftSpawn": {
+   "base": "AIUnitSpawnEquippable",
+   "events": {
+    "Add Designated Targets": {
+     "method": "AddDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds units to the AI pilot's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."
+    },
+    "Add Non-Targets": {
+     "method": "AddNonTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds unit(s) to this AI pilot's list of non-targets.  They will never attack these target."
+    },
+    "Add Priority Targets": {
+     "method": "AddPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds unit(s) to this AI pilot's priority targets.  They will attack these targets before others when they are detected."
+    },
+    "Attack Target": {
+     "method": "AttackTarget",
+     "params": [
+      {
+       "name": "tgt",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Attack a specific target, regardless of detection or other threats."
+    },
+    "Bomb Waypoint": {
+     "method": "BombWaypoint",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "hdg",
+       "type": "System.Single"
+      },
+      {
+       "name": "count",
+       "type": "System.Single"
+      },
+      {
+       "name": "altitude",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Bomb a waypoint. Aircraft must have unguided bombs equipped."
+    },
+    "Cancel Attack Tgt": {
+     "method": "CancelAttackTarget",
+     "params": [],
+     "tooltip": "Cancel the override attack target and return to normal behavior."
+    },
+    "Clear Designated Targets": {
+     "method": "ClearDesignatedTargets",
+     "params": [],
+     "tooltip": "Clears the AI pilot's designated targets."
+    },
+    "Clear Non-Targets": {
+     "method": "ClearNonTargets",
+     "params": [],
+     "tooltip": "Clears the AI pilot's non-target list."
+    },
+    "Clear Priority Targets": {
+     "method": "ClearPriorityTargets",
+     "params": [],
+     "tooltip": "Clears the AI pilot's priority target list."
+    },
+    "Fire ASM": {
+     "method": "FireASMOnPath",
+     "params": [
+      {
+       "name": "asmPath",
+       "type": "FollowPath"
+      },
+      {
+       "name": "tMode",
+       "type": "AntiShipGuidance+ASMTerminalBehaviors"
+      }
+     ],
+     "tooltip": "Command the aircraft to fire an anti-ship missile on the given path if available."
+    },
+    "Fire Countermeasures": {
+     "method": "CountermeasureProgram",
+     "params": [
+      {
+       "name": "flares",
+       "type": "System.Boolean"
+      },
+      {
+       "name": "chaff",
+       "type": "System.Boolean"
+      },
+      {
+       "name": "count",
+       "type": "System.Single"
+      },
+      {
+       "name": "interval",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Fires a set amount of chaff and/or flares."
+    },
+    "Form On Pilot": {
+     "method": "FormOnPilot",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Command the aircraft to form up on a particular air unit."
+    },
+    "Land": {
+     "method": "Land",
+     "params": [
+      {
+       "name": "airport",
+       "type": "AirportReference"
+      }
+     ],
+     "tooltip": "Land at a specified airfield."
+    },
+    "Land At Wpt": {
+     "method": "LandAtWpt",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Vertically land on a specified waypoint if capable."
+    },
+    "Land At Wpt w/ Dir Facing": {
+     "method": "LandAtWptHdgFcg",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "inHeading",
+       "type": "System.Single"
+      },
+      {
+       "name": "landFacing",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Vertically land on a specified waypoint with the specified heading, if capable."
+    },
+    "Land At Wpt w/ Direction": {
+     "method": "LandAtWptHdg",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "inHeading",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Vertically land on a specified waypoint with the specified heading, if capable."
+    },
+    "Laser Designate Target": {
+     "method": "LaseTarget",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      },
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Command the pilot to laser designate a specific target, if able. It will continue on its current orbit or path. After the target is destroyed or the pilot receives another combat command, the pilot will stop laser designating."
+    },
+    "Laser Designate With Obit": {
+     "method": "LaseTargetOrbit",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      },
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      },
+      {
+       "name": "orbitWp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "radius",
+       "type": "System.Single"
+      },
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Command the pilot to laser designate a specific target, if able. Set a custom orbit. After the target is destroyed or the pilot receives another combat command, the pilot will stop laser designating."
+    },
+    "Load Passengers": {
+     "method": "LoadPassengers",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListSame"
+      }
+     ],
+     "tooltip": "Command the selected units to board this aircraft."
+    },
+    "Load Unit Group": {
+     "method": "LoadPassengerGroup",
+     "params": [
+      {
+       "name": "group",
+       "type": "VTUnitGroup+UnitGroup"
+      }
+     ],
+     "tooltip": "Command the selected unit group to board this aircraft."
+    },
+    "Orbit Waypoint": {
+     "method": "SetOrbitNow",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "radius",
+       "type": "System.Single"
+      },
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Command the aircraft to orbit a waypoint."
+    },
+    "Order Laser Designating": {
+     "method": "SetToLasingMode",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set whether the pilot should only find and laser designate targets instead of attacking. It will continue on its current orbit or path. It will only designate ground units or slow moving aircraft. If it's in this state, commanding it to attack or engage/disengage will revert it to ordinary behavior."
+    },
+    "Rearm": {
+     "method": "RearmAt",
+     "params": [
+      {
+       "name": "airport",
+       "type": "AirportReference"
+      }
+     ],
+     "tooltip": "Land, rearm/refuel, and take off again from specified airfield."
+    },
+    "Refuel From Tanker": {
+     "method": "RefuelWithUnit",
+     "params": [
+      {
+       "name": "fuelerUnit",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Command the aircraft to refuel from a particular tanker."
+    },
+    "Remove Designated Targets": {
+     "method": "RemoveDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove a particular set of units from the designated targets."
+    },
+    "Set Altitude": {
+     "method": "SetAltitude",
+     "params": [
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the aircraft's default altitude."
+    },
+    "Set Designated Targets": {
+     "method": "SetDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the AI pilot's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."
+    },
+    "Set Formation Distance": {
+     "method": "SetFormationDistance",
+     "params": [
+      {
+       "name": "dist",
+       "type": "AIAircraftSpawn+FormationDistances"
+      }
+     ],
+     "tooltip": "Set the formation distance of AI aircraft when they follow this unit."
+    },
+    "Set Jamming at Will": {
+     "method": "SetJammingAtWill",
+     "params": [
+      {
+       "name": "j",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the unit can jam targets of opportunity without being told to (if equipped)."
+    },
+    "Set Nav Speed": {
+     "method": "SetNavSpeed",
+     "params": [
+      {
+       "name": "speed",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the aircraft's default navigation airspeed (when not in combat)."
+    },
+    "Set Non-Targets": {
+     "method": "SetNonTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the AI pilot's non-target list to a new list. They will never attack these targets."
+    },
+    "Set Path": {
+     "method": "SetPath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Set the aircraft to fly along a path."
+    },
+    "Set Player Commands": {
+     "method": "SetPlayerCommands",
+     "params": [
+      {
+       "name": "mode",
+       "type": "AIAircraftSpawn+PlayerCommandsModes"
+      }
+     ],
+     "tooltip": "Set whether the unit can be commanded by the player."
+    },
+    "Set Priority Targets": {
+     "method": "SetPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the AI pilot's priority target list to a new list. They will prioritize attacking these targets once they are detected."
+    },
+    "Set Radar": {
+     "method": "SetRadar",
+     "params": [
+      {
+       "name": "radarOn",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set's the unit's radar on or off, if it has one."
+    },
+    "Set Radio Comms": {
+     "method": "SetRadioComms",
+     "params": [
+      {
+       "name": "radioEnabled",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the AI pilot will communicate with the player via radio."
+    },
+    "Take Off": {
+     "method": "TakeOff",
+     "params": [],
+     "tooltip": "Command the pilot to take off."
+    },
+    "Taxi Path": {
+     "method": "TaxiPath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Command the aircraft to taxi on a certain path."
+    },
+    "Taxi Path Speed": {
+     "method": "TaxiPathSpeed",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      },
+      {
+       "name": "speed",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Command the aircraft to taxi on a certain path at a certain speed."
+    },
+    "Unload Passengers": {
+     "method": "UnloadAllPassengers",
+     "params": [
+      {
+       "name": "rallyWp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Unload all passengers when available."
+    }
+   }
+  },
+  "AICarrierSpawn": {
+   "base": "AISeaUnitSpawn",
+   "events": {
+    "Launch All": {
+     "method": "LaunchAllAircraft",
+     "params": [],
+     "tooltip": "Command all onboard aircraft to take off."
+    }
+   }
+  },
+  "AIDecoyRadarSpawn": {
+   "base": "AIUnitSpawn",
+   "events": {}
+  },
+  "AIDroneCarrierSpawn": {
+   "base": "AISeaUnitSpawn",
+   "events": {
+    "Launch Drones": {
+     "method": "LaunchDrones",
+     "params": [],
+     "tooltip": "Launch all drones from the carrier."
+    }
+   }
+  },
+  "AIFixedSAMSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {
+    "Reload": {
+     "method": "ReloadNow",
+     "params": [],
+     "tooltip": "Force the launcher to reload now."
+    },
+    "Set Allow Reloads": {
+     "method": "SetAllowReload",
+     "params": [
+      {
+       "name": "allowed",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the launcher is allowed to reload."
+    },
+    "Set Reload Time": {
+     "method": "SetReloadTime",
+     "params": [
+      {
+       "name": "time",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the reload time for the launcher."
+    }
+   }
+  },
+  "AIGroundECMSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {
+    "Auto Mode": {
+     "method": "VT_AutoMode",
+     "params": [],
+     "tooltip": "Set to the default auto mode -- the unit will find and jam any detected radar emissions."
+    },
+    "Auto-target on Band": {
+     "method": "VT_AutoTargetBand",
+     "params": [
+      {
+       "name": "band",
+       "type": "AIGroundECMSpawn+EMBandOptions"
+      }
+     ],
+     "tooltip": "Automatically find and engage targets but use a specific band. Useful for GPS/Comms jamming in low band."
+    },
+    "Manual Direction": {
+     "method": "VT_ManualDirection",
+     "params": [
+      {
+       "name": "bearing",
+       "type": "System.Single"
+      },
+      {
+       "name": "elevation",
+       "type": "System.Single"
+      },
+      {
+       "name": "band",
+       "type": "AIGroundECMSpawn+EMBandOptions"
+      }
+     ],
+     "tooltip": "Set the unit to transmit noise at the specified direction and frequency. Use for defending a general area."
+    },
+    "Manual Target": {
+     "method": "VT_ManualTarget",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      },
+      {
+       "name": "band",
+       "type": "AIGroundECMSpawn+EMBandOptions"
+      }
+     ],
+     "tooltip": "Set the unit to only target this specific target at the specified frequency band, if able, otherwise remain inactive."
+    }
+   }
+  },
+  "AIGroundMWSSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {}
+  },
+  "AIHeliSpawn": {
+   "base": "AIUnitSpawnEquippable",
+   "events": {
+    "Fly to Waypoint": {
+     "method": "PathfindToWaypoint",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "alt",
+       "type": "System.Single"
+      },
+      {
+       "name": "useRadarAlt",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Fly to a waypoint while maintaining a given altitude."
+    },
+    "Test fly to wp": {
+     "method": "TestFlyToWP",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "TEST"
+    }
+   }
+  },
+  "AIJTACSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {
+    "JTAC Lase Position": {
+     "method": "JTACLasePosition",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      },
+      {
+       "name": "point",
+       "type": "FixedPoint"
+      },
+      {
+       "name": "marker",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Command this soldier to laser designate a target position for airstrike. The soldier will stop moving and attacking. Max range: 20km."
+    },
+    "JTAC Lase Unit": {
+     "method": "JTACLaseUnit",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      },
+      {
+       "name": "unit",
+       "type": "UnitReference"
+      },
+      {
+       "name": "marker",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Command this soldier to laser designate a target unit for airstrike. The target should be slow moving or stationary. The soldier will stop moving and attacking. Max range: 20km."
+    },
+    "JTAC Lase Units": {
+     "method": "JTACLaseUnits",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      },
+      {
+       "name": "targets",
+       "type": "UnitReferenceListSubs"
+      },
+      {
+       "name": "marker",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Command this soldier to laser designate any target in this list until all targets are destroyed. The soldier will find a new target if the current one is hidden or destroyed. The soldier will stop moving and attacking. Max range: 20km."
+    },
+    "JTAC Lase Waypoint": {
+     "method": "JTACLaseWaypoint",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      },
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "marker",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Command this soldier to laser designate a target waypoint for airstrike. The soldier will stop moving and attacking. Max range: 20km."
+    },
+    "Stop JTAC Laser": {
+     "method": "StopJTACLaser",
+     "params": [],
+     "tooltip": "Command this soldier to stop lasing the target."
+    }
+   }
+  },
+  "AILockingRadarSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {}
+  },
+  "AIMissileSilo": {
+   "base": "AIUnitSpawn",
+   "events": {
+    "Begin Launch": {
+     "method": "VT_BeginLaunch",
+     "params": [
+      {
+       "name": "countdownTime",
+       "type": "System.Single"
+      },
+      {
+       "name": "turnDir",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Begin a launch countdown."
+    }
+   }
+  },
+  "AISeaUnitSpawn": {
+   "base": "AIUnitSpawnEquippable",
+   "events": {
+    "Move Path": {
+     "method": "MovePath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Command the vessel to move along a path."
+    },
+    "Move To": {
+     "method": "MoveTo",
+     "params": [
+      {
+       "name": "target",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Command the vessel to move to a waypoint."
+    },
+    "Stop": {
+     "method": "Stop",
+     "params": [],
+     "tooltip": "Command the vessel to stop where it is."
+    }
+   }
+  },
+  "AITestUnitSpawn": {
+   "base": "AIUnitSpawn",
+   "events": {
+    "Run Test": {
+     "method": "RunTest",
+     "params": [],
+     "tooltip": ""
+    }
+   }
+  },
+  "AIUnitSpawn": {
+   "base": "UnitSpawn",
+   "events": {
+    "Add Non-Targets": {
+     "method": "AddNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Add units to the list of units that this unit will not attack."
+    },
+    "Add Priority Targets": {
+     "method": "AddPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Add units to the list of units that this unit will prioritize when finding a target"
+    },
+    "Clear Non-Targets": {
+     "method": "ClearNonTargets",
+     "params": [],
+     "tooltip": "Clear the list of units that this unit will not attack."
+    },
+    "Clear Priority Targets": {
+     "method": "ClearPriorityTargets",
+     "params": [],
+     "tooltip": "Clear the list of units that this unit will prioritize when finding a target"
+    },
+    "Destroy": {
+     "method": "DestroySelf",
+     "params": [],
+     "tooltip": "This event destroys the unit immediately."
+    },
+    "Force Alt Spawn": {
+     "method": "ForceAltSpawn",
+     "params": [
+      {
+       "name": "altSpawnNumber",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Force a specific alternate spawn, overriding the random roll. This must be called BEFORE the unit spawns. If the unit is in a group with synced alternates, the other units will be forced as well."
+    },
+    "Randomize Alt Spawn": {
+     "method": "RandomizeAltSpawn",
+     "params": [],
+     "tooltip": "Set a new random alternate spawn for this unit. Useful for respawning units in random places.  If the unit is in a group with synced alternates, the other units will have the same new alternate."
+    },
+    "Remove Non-Targets": {
+     "method": "RemoveNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove units from the list of units that this unit will not attack."
+    },
+    "Remove Priority Targets": {
+     "method": "RemovePriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove units from the list of units that this unit will prioritize when finding a target"
+    },
+    "Set Engage Enemies": {
+     "method": "SetEngageEnemies",
+     "params": [
+      {
+       "name": "engage",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the unit should engage enemies."
+    },
+    "Set Invincible": {
+     "method": "SetInvincible",
+     "params": [
+      {
+       "name": "i",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Sets whether the unit can take damage."
+    },
+    "Set Non-Targets": {
+     "method": "SetNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Set the list of units that this unit will not attack. (Overwrites existing list)"
+    },
+    "Set Priority Targets": {
+     "method": "SetPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Set the list of units that this unit will prioritize when finding a target. (Overwrites existing list)"
+    },
+    "Spawn Unit": {
+     "method": "SpawnUnit",
+     "params": [],
+     "tooltip": "Spawn the unit if it hasn't already been spawned"
+    }
+   }
+  },
+  "AIUnitSpawnEquippable": {
+   "base": "AIUnitSpawn",
+   "events": {}
+  },
+  "APCUnitSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {
+    "Load Passengers": {
+     "method": "LoadPassengers",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListSame"
+      }
+     ],
+     "tooltip": "Command the selected units to board this aircraft."
+    },
+    "Load Unit Group": {
+     "method": "LoadPassengerGroup",
+     "params": [
+      {
+       "name": "group",
+       "type": "VTUnitGroup+UnitGroup"
+      }
+     ],
+     "tooltip": "Command the selected unit group to board this aircraft."
+    },
+    "Unload Passengers": {
+     "method": "UnloadAllPassengers",
+     "params": [
+      {
+       "name": "rallyWp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Unload all passengers when available."
+    }
+   }
+  },
+  "ArtilleryUnitSpawn": {
+   "base": "GroundUnitSpawn",
+   "events": {
+    "Clear Fire Orders": {
+     "method": "ClearFireOrders",
+     "params": [],
+     "tooltip": "Clears any existing fire orders for the artillery unit."
+    },
+    "Fire On Unit": {
+     "method": "FireOnUnit",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      },
+      {
+       "name": "shotsPerSalvo",
+       "type": "System.Single"
+      },
+      {
+       "name": "salvos",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Commands the artillery unit to fire on a specific unit if it's in range."
+    },
+    "Fire On Waypoint": {
+     "method": "FireOnWaypoint",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "count",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Commands the artillery unit to fire a single salvo on a waypoint position if it's in range."
+    },
+    "Fire Salvos On Waypoint": {
+     "method": "FireMultiOnWaypoint",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "shotsPerSalvo",
+       "type": "System.Single"
+      },
+      {
+       "name": "salvos",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Commands the artillery unit to fire a number of salvos on a waypoint position if it's in range."
+    },
+    "Fire Salvos On Waypoint Radius": {
+     "method": "FireMultiOnWaypointRadius",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "radius",
+       "type": "System.Single"
+      },
+      {
+       "name": "shotsPerSalvo",
+       "type": "System.Single"
+      },
+      {
+       "name": "salvos",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Commands the artillery unit to fire a number of salvos spread out over an area around a position if it's in range."
+    }
+   }
+  },
+  "GroundUnitSpawn": {
+   "base": "AIUnitSpawnEquippable",
+   "events": {
+    "Board Vehicle": {
+     "method": "BoardAIBay",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Command the unit to board an AI vehicle's passenger bay."
+    },
+    "Dismount Vehicle": {
+     "method": "DismountAIBay",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Command the unit to dismount the vehicle it's riding when available. It will move towards Rally Point once dismounted."
+    },
+    "Move To": {
+     "method": "MoveTo",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Command the unit to move directly to a waypoint."
+    },
+    "Move To Point": {
+     "method": "MoveToPoint",
+     "params": [
+      {
+       "name": "point",
+       "type": "FixedPoint"
+      }
+     ],
+     "tooltip": "Command the unit to move directly to an arbitrary point."
+    },
+    "Park Now": {
+     "method": "ParkNow",
+     "params": [],
+     "tooltip": "Command the unit to park where it stands."
+    },
+    "Set IR Strobe": {
+     "method": "SetIRStrobeEnabled",
+     "params": [
+      {
+       "name": "e",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Toggle an infrared strobe signal that can only be seen in nightvision."
+    },
+    "Set Movement Speed": {
+     "method": "SetMovementSpeed",
+     "params": [
+      {
+       "name": "s",
+       "type": "GroundUnitSpawn+MoveSpeeds"
+      }
+     ],
+     "tooltip": "Set the movement speed of this ground vehicle."
+    },
+    "Set Path": {
+     "method": "SetPath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Command the unit to move along a path (if able)."
+    }
+   }
+  },
+  "IFVSpawn": {
+   "base": "APCUnitSpawn",
+   "events": {
+    "Set Allow Reload": {
+     "method": "SetAllowReload",
+     "params": [
+      {
+       "name": "r",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the unit can reload ammo/missiles when empty."
+    }
+   }
+  },
+  "J4MothershipSpawn": {
+   "base": "AIUnitSpawn",
+   "events": {
+    "Disengage Fighters": {
+     "method": "DisengageFighters",
+     "params": [
+      {
+       "name": "radius",
+       "type": "System.Single"
+      },
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Fighters disengage and orbit mother position."
+    },
+    "Enter": {
+     "method": "Enter",
+     "params": [],
+     "tooltip": "Enter the mothership."
+    },
+    "Fire": {
+     "method": "FireBeam",
+     "params": [],
+     "tooltip": "Fire the lazors"
+    }
+   }
+  },
+  "MultiplayerSpawn": {
+   "base": "UnitSpawn",
+   "events": {
+    "Add Funds": {
+     "method": "AddFunds",
+     "params": [
+      {
+       "name": "amount",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Add funds to this slot's equipment budget.  If budget mode is Team, funds apply to whole team."
+    },
+    "Add Lives": {
+     "method": "AddLives",
+     "params": [
+      {
+       "name": "lives",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Use this to add/remove lives if the slot has limited respawns."
+    },
+    "Destroy Vehicle": {
+     "method": "DestroyVehicle",
+     "params": [],
+     "tooltip": "Use this to destroy the player's vehicle."
+    },
+    "Force Alt Spawn": {
+     "method": "ForceAltSpawn",
+     "params": [
+      {
+       "name": "altSpawnNumber",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Force a specific alternate spawn, overriding the random roll. If the unit is in a group with synced alternates, the other units will be forced as well."
+    },
+    "Move Spawn": {
+     "method": "MoveSpawn",
+     "params": [
+      {
+       "name": "point",
+       "type": "FixedPoint"
+      },
+      {
+       "name": "heading",
+       "type": "System.Single"
+      },
+      {
+       "name": "startMode",
+       "type": "PlayerSpawn+FlightStartModes"
+      },
+      {
+       "name": "initSpeed",
+       "type": "System.Single"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Move the spawn to a different location"
+    },
+    "Remove Funds": {
+     "method": "RemoveFunds",
+     "params": [
+      {
+       "name": "amount",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Remove funds from this slot's equipment budget.  If budget mode is Team, funds apply to whole team. Budget has a floor of $0."
+    },
+    "Set AltSpawn Available": {
+     "method": "SetAltSpawnAvailable",
+     "params": [
+      {
+       "name": "available",
+       "type": "System.Boolean"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set whether the selectable alt spawn can be chosen by the player."
+    },
+    "Set Fuel Unit": {
+     "method": "SetFuelUnit",
+     "params": [
+      {
+       "name": "unit",
+       "type": "UnitReference"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set this slot's Fuel waypoint unit (carrier or tanker)."
+    },
+    "Set Fuel Waypoint": {
+     "method": "SetFuelWP",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set this slot's Fuel waypoint"
+    },
+    "Set Invincible": {
+     "method": "SetInvincible",
+     "params": [
+      {
+       "name": "i",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the player from this slot is invincible."
+    },
+    "Set Lives": {
+     "method": "SetLives",
+     "params": [
+      {
+       "name": "lives",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Use this to set lives to a certain number the slot has limited respawns."
+    },
+    "Set RTB To Spawn": {
+     "method": "SetRTBToSpawn",
+     "params": [
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set the RTB waypoint to the spawn point."
+    },
+    "Set RTB Unit": {
+     "method": "SetRTBUnit",
+     "params": [
+      {
+       "name": "unit",
+       "type": "UnitReference"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set this slot's RTB unit (carrier)"
+    },
+    "Set RTB Waypoint": {
+     "method": "SetRTBWP",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "altSpawnIdx",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Set this slot's RTB waypoint"
+    }
+   }
+  },
+  "PlayerSpawn": {
+   "base": "UnitSpawn",
+   "events": {
+    "Close Doors": {
+     "method": "CloseAllDoors",
+     "params": [],
+     "tooltip": ""
+    },
+    "Destroy Vehicle": {
+     "method": "DestroyVehicle",
+     "params": [],
+     "tooltip": "Destroy the player's aircraft without killing the pilot."
+    },
+    "Kill Pilot": {
+     "method": "KillPilot",
+     "params": [],
+     "tooltip": "Kill the pilot instantaneously (as if killed by g-forces or impact)"
+    },
+    "Repair Vehicle": {
+     "method": "RepairVehicle",
+     "params": [],
+     "tooltip": "Fully repair the vehicle."
+    },
+    "Reset Vehicle": {
+     "method": "ResetVehicle",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      },
+      {
+       "name": "heading",
+       "type": "System.Single"
+      },
+      {
+       "name": "speed",
+       "type": "System.Single"
+      },
+      {
+       "name": "mode",
+       "type": "PlayerSpawn+FlightStartModes"
+      },
+      {
+       "name": "fadeTime",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Recover the vehicle and return it to this state."
+    },
+    "Set Waypoint": {
+     "method": "SetWaypoint",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Set the player's current waypoint."
+    }
+   }
+  },
+  "RearmingUnitSpawn": {
+   "base": "UnitSpawn",
+   "events": {
+    "Set Enabled": {
+     "method": "SetEnabled",
+     "params": [
+      {
+       "name": "e",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Enable or disable the rearming point."
+    },
+    "Spawn Unit": {
+     "method": "SpawnUnit",
+     "params": [],
+     "tooltip": "Spawn the unit if it hasn't already been spawned"
+    }
+   }
+  },
+  "RocketArtilleryUnitSpawn": {
+   "base": "ArtilleryUnitSpawn",
+   "events": {
+    "Set Allow Reload": {
+     "method": "SetAllowReload",
+     "params": [
+      {
+       "name": "allow",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether this unit is allowed to reload rockets after emptying."
+    },
+    "Set Reload Time": {
+     "method": "SetReloadTime",
+     "params": [
+      {
+       "name": "time",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Change the time it takes for this unit to reload, if allowed."
+    },
+    "Set Ripple Rate": {
+     "method": "SetRippleRate",
+     "params": [
+      {
+       "name": "rpm",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the rate of fire when launching salvos at targets."
+    },
+    "Set Shots Per Salvo": {
+     "method": "SetShotsPerSalvo",
+     "params": [
+      {
+       "name": "shots",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the number of rockets the unit will fire on each salvo when automatically engaging visible targets."
+    }
+   }
+  },
+  "ScenarioTriggerEvents": {
+   "base": null,
+   "events": {
+    "Disable": {
+     "method": "Disable",
+     "params": [],
+     "tooltip": "Disable the event so it can not be triggered."
+    },
+    "Enable": {
+     "method": "Enable",
+     "params": [],
+     "tooltip": "Enable the event so it can be triggered."
+    },
+    "Trigger": {
+     "method": "Trigger",
+     "params": [],
+     "tooltip": "Trigger the event regardless of its state."
+    }
+   }
+  },
+  "VTMapEdScenarioBasePrefab": {
+   "base": "VTMapEdStructurePrefab",
+   "events": {
+    "Set Team": {
+     "method": "SetTeam",
+     "params": [
+      {
+       "name": "team",
+       "type": "Teams"
+      }
+     ],
+     "tooltip": "Set the team that this base belongs to."
+    }
+   }
+  },
+  "VTObjective": {
+   "base": null,
+   "events": {
+    "Begin Objective": {
+     "method": "BeginObjective",
+     "params": [],
+     "tooltip": "Begins the objective if it has not already begun."
+    },
+    "Cancel Objective": {
+     "method": "CancelObjective",
+     "params": [],
+     "tooltip": "Removes the objective without completing or failing it."
+    },
+    "Complete Objective": {
+     "method": "CompleteObjective",
+     "params": [],
+     "tooltip": "Completes the objective if it has not already finished."
+    },
+    "Fail Objective": {
+     "method": "FailObjective",
+     "params": [],
+     "tooltip": "Fails the objective if it has begun and has not yet finished.  This will trigger a total mission failure if the objective is marked as Required."
+    },
+    "Reset Objective": {
+     "method": "ResetObjective",
+     "params": [],
+     "tooltip": "Reset the objective as if it was never started. It can be started over again! Beware that if this mission was failed, it may be impossible to complete again depending on the circumstances."
+    }
+   }
+  },
+  "VTSODestructible": {
+   "base": "VTStaticObject",
+   "events": {
+    "Destroy": {
+     "method": "VTE_Destroy",
+     "params": [],
+     "tooltip": "Destroy the object."
+    }
+   }
+  },
+  "VTSOTutorial": {
+   "base": "VTStaticObject",
+   "events": {
+    "Fire Custom Action": {
+     "method": "FireCustomAction",
+     "params": [
+      {
+       "name": "idx",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Fires custom action set up in VTSO"
+    }
+   }
+  },
+  "VTScenario": {
+   "base": null,
+   "events": {
+    "Add Funds to Team": {
+     "method": "AddFundsToTeam",
+     "params": [
+      {
+       "name": "team",
+       "type": "Teams"
+      },
+      {
+       "name": "amount",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Add funds to the equipment budget."
+    },
+    "Add Score": {
+     "method": "AddTeamScore",
+     "params": [
+      {
+       "name": "team",
+       "type": "Teams"
+      },
+      {
+       "name": "score",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Add points to the team's score."
+    },
+    "Add Values": {
+     "method": "AddValues",
+     "params": [
+      {
+       "name": "source",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "dest",
+       "type": "GlobalValue"
+      }
+     ],
+     "tooltip": "Add two global values. Both values are added together, and the result is stored in the destination."
+    },
+    "Copilot Priority Radio Message": {
+     "method": "PlayCopilotRadioMessage",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      }
+     ],
+     "tooltip": "Play an audio clip on the copilot radio channel, interrupting previous messages."
+    },
+    "Copilot Radio Message": {
+     "method": "PlayCopilotRadioMessageLowPriority",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      }
+     ],
+     "tooltip": "Play an audio clip on the copilot radio channel."
+    },
+    "Copy Value": {
+     "method": "CopyValue",
+     "params": [
+      {
+       "name": "source",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "dest",
+       "type": "GlobalValue"
+      }
+     ],
+     "tooltip": "Copy a global value. The value of the source is copied into the destination."
+    },
+    "Decrement Value": {
+     "method": "DecrementValue",
+     "params": [
+      {
+       "name": "gv",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "val",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Subtract from a global value."
+    },
+    "Destroy Units": {
+     "method": "KillUnits",
+     "params": [
+      {
+       "name": "unitList",
+       "type": "UnitReferenceListAI"
+      }
+     ],
+     "tooltip": "Destroy all selected units."
+    },
+    "Display Control Message": {
+     "method": "DisplayControlMessage",
+     "params": [
+      {
+       "name": "s",
+       "type": "System.String"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      },
+      {
+       "name": "control",
+       "type": "VehicleControlReference"
+      }
+     ],
+     "tooltip": "Display a pop message attached to one of the vehicle's controls."
+    },
+    "Display Control Message Video": {
+     "method": "DisplayControlMessageVideo",
+     "params": [
+      {
+       "name": "s",
+       "type": "System.String"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      },
+      {
+       "name": "control",
+       "type": "VehicleControlReference"
+      },
+      {
+       "name": "video",
+       "type": "VTSVideoReference"
+      }
+     ],
+     "tooltip": "Display a pop message attached to one of the vehicle's controls."
+    },
+    "Display Message": {
+     "method": "DisplayMessage",
+     "params": [
+      {
+       "name": "s",
+       "type": "System.String"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Display a popup message in the player's view."
+    },
+    "Display Message Team": {
+     "method": "DisplayMessageTeam",
+     "params": [
+      {
+       "name": "s",
+       "type": "System.String"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      },
+      {
+       "name": "team",
+       "type": "Teams"
+      }
+     ],
+     "tooltip": "Display a popup message for the players on this team."
+    },
+    "Display Message Video": {
+     "method": "DisplayMessageWithVideo",
+     "params": [
+      {
+       "name": "s",
+       "type": "System.String"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      },
+      {
+       "name": "video",
+       "type": "VTSVideoReference"
+      }
+     ],
+     "tooltip": "Display a popup message in the player's view."
+    },
+    "Fire Conditional Action": {
+     "method": "FireConditionalAction",
+     "params": [
+      {
+       "name": "action",
+       "type": "ConditionalActionReference"
+      }
+     ],
+     "tooltip": "Fire actions using IF, ELSE IF, ELSE statements."
+    },
+    "Fire Random Event": {
+     "method": "FireRandomEvent",
+     "params": [
+      {
+       "name": "rEvent",
+       "type": "RandomEventReference"
+      }
+     ],
+     "tooltip": "Fire an event randomly selected from a weighted list."
+    },
+    "Force Quickload": {
+     "method": "ForceQuickload",
+     "params": [],
+     "tooltip": "Trigger a quickload now, if there is a quicksave available."
+    },
+    "Force Quicksave": {
+     "method": "ForceQuicksave",
+     "params": [],
+     "tooltip": "Trigger a quicksave now if the player is still alive (ignores quicksave limits)."
+    },
+    "Hide Message": {
+     "method": "HideMessage",
+     "params": [],
+     "tooltip": "Hides the popup message if there is one present."
+    },
+    "Increment Value": {
+     "method": "IncrementValue",
+     "params": [
+      {
+       "name": "gv",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "val",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Add to a global value."
+    },
+    "Light Flare": {
+     "method": "LightFlareAtPos",
+     "params": [
+      {
+       "name": "point",
+       "type": "FixedPoint"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      },
+      {
+       "name": "color",
+       "type": "SmokeFlare+FlareColors"
+      }
+     ],
+     "tooltip": "Light a colored, smokey flare at a certain position."
+    },
+    "Multiply Value": {
+     "method": "MultiplyValue",
+     "params": [
+      {
+       "name": "gv",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "val",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Multiply a global value."
+    },
+    "Multiply Values": {
+     "method": "MultiplyValues",
+     "params": [
+      {
+       "name": "source",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "dest",
+       "type": "GlobalValue"
+      }
+     ],
+     "tooltip": "Multiply two global values. Both values are multiplied together, and the result is stored in the destination."
+    },
+    "Play BGM": {
+     "method": "PlayBGM",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      },
+      {
+       "name": "loop",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Play an audio clip as background music."
+    },
+    "Play Priority Message": {
+     "method": "PlayPriorityMessage",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      }
+     ],
+     "tooltip": "Stop all currently playing or queued radio messages, then play a new Radio Message."
+    },
+    "Radio Message": {
+     "method": "RadioMessage",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      }
+     ],
+     "tooltip": "Play an audio clip to the player over the radio."
+    },
+    "Radio Message Team": {
+     "method": "RadioMessageTeam",
+     "params": [
+      {
+       "name": "audio",
+       "type": "VTSAudioReference"
+      },
+      {
+       "name": "team",
+       "type": "MPUITeams"
+      }
+     ],
+     "tooltip": "Play an audio clip to the players on one team over the radio."
+    },
+    "Remove Funds from Team": {
+     "method": "RemoveFundsFrom",
+     "params": [
+      {
+       "name": "team",
+       "type": "Teams"
+      },
+      {
+       "name": "amount",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Remove funds from the team's equipment budget. Budget has a floor of $0."
+    },
+    "Reset Value": {
+     "method": "ResetValue",
+     "params": [
+      {
+       "name": "gv",
+       "type": "GlobalValue"
+      }
+     ],
+     "tooltip": "Reset a global value to its initial value."
+    },
+    "Send Path to GPS": {
+     "method": "SendPathToGPS",
+     "params": [
+      {
+       "name": "index",
+       "type": "System.Single"
+      },
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Send a path to the player's GPS system."
+    },
+    "Send Wpt to GPS": {
+     "method": "SendWaypointToGPS",
+     "params": [
+      {
+       "name": "index",
+       "type": "System.Single"
+      },
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Send a waypoint to the player's GPS system as a mission target."
+    },
+    "Set Engage": {
+     "method": "SetEngage",
+     "params": [
+      {
+       "name": "unitList",
+       "type": "UnitReferenceListAI"
+      },
+      {
+       "name": "engage",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set multiple units to engage enemies."
+    },
+    "Set Fuel Unit": {
+     "method": "SP_SetFuelUnitWP",
+     "params": [
+      {
+       "name": "unit",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Change the Fuel waypoint unit (carrier or tanker)."
+    },
+    "Set Fuel Waypoint": {
+     "method": "SP_SetFuelWP",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Change the Fuel waypoint"
+    },
+    "Set MFD": {
+     "method": "SetMFD",
+     "params": [
+      {
+       "name": "mfdType",
+       "type": "VTScenario+MFDTypes"
+      },
+      {
+       "name": "mfdIdx",
+       "type": "System.Single"
+      },
+      {
+       "name": "page",
+       "type": "System.String"
+      }
+     ],
+     "tooltip": "Set an MFD to a certain page."
+    },
+    "Set RTB Unit": {
+     "method": "SP_SetRTBUnit",
+     "params": [
+      {
+       "name": "unit",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Change the RTB waypoint to a carrier unit."
+    },
+    "Set RTB Waypoint": {
+     "method": "SP_SetRTB",
+     "params": [
+      {
+       "name": "wp",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Change the RTB waypoint"
+    },
+    "Set RTB to Spawn": {
+     "method": "MP_SetRTBSpawn",
+     "params": [
+      {
+       "name": "team",
+       "type": "Teams"
+      }
+     ],
+     "tooltip": "Change the team's RTB waypoint to the player's spawn point."
+    },
+    "Set Time Speed": {
+     "method": "SetTimeSpeed",
+     "params": [
+      {
+       "name": "timeMult",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the rate that the time of day advances.  1 = normal"
+    },
+    "Set Value": {
+     "method": "SetValue",
+     "params": [
+      {
+       "name": "gv",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "val",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set a global value."
+    },
+    "Spawn Units": {
+     "method": "SpawnUnits",
+     "params": [
+      {
+       "name": "unitList",
+       "type": "UnitReferenceListAI"
+      }
+     ],
+     "tooltip": "Spawn all selected units."
+    },
+    "Stop BGM": {
+     "method": "StopBGM",
+     "params": [],
+     "tooltip": "Fades out background music."
+    },
+    "Stop Radio Messages": {
+     "method": "StopCommRadio",
+     "params": [],
+     "tooltip": "Stops all currently playing or queued radio messages"
+    },
+    "Subtract Values": {
+     "method": "SubtractValues",
+     "params": [
+      {
+       "name": "source",
+       "type": "GlobalValue"
+      },
+      {
+       "name": "dest",
+       "type": "GlobalValue"
+      }
+     ],
+     "tooltip": "Subtract two global values. The source is subtracted from the destination, and the result is stored in the destination."
+    },
+    "Transition Time": {
+     "method": "TransitionTime",
+     "params": [
+      {
+       "name": "time",
+       "type": "System.Single"
+      },
+      {
+       "name": "duration",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Smoothly transition to a certain time of day. Time can only advance forward, so if the hour set is lower than the current time of day, it will advance to that hour on the next day."
+    },
+    "Transition Time Immediate": {
+     "method": "TransitionTimeImmediate",
+     "params": [
+      {
+       "name": "time",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Immediately change the time of day."
+    },
+    "Transition Weather": {
+     "method": "TransitionWeather",
+     "params": [
+      {
+       "name": "weather",
+       "type": "WeatherPresetReference"
+      },
+      {
+       "name": "time",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Smoothly transition the clouds and fog to a new setting."
+    },
+    "Transition Wind": {
+     "method": "TransitionWind",
+     "params": [
+      {
+       "name": "direction",
+       "type": "System.Single"
+      },
+      {
+       "name": "speed",
+       "type": "System.Single"
+      },
+      {
+       "name": "variation",
+       "type": "System.Single"
+      },
+      {
+       "name": "gusts",
+       "type": "System.Single"
+      },
+      {
+       "name": "time",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Smoothly transition the wind to a new setting."
+    }
+   }
+  },
+  "VTSequencedEvent": {
+   "base": "UIOrganizedList.IOrganizedListItem",
+   "events": {
+    "Begin": {
+     "method": "BeginEvent",
+     "params": [],
+     "tooltip": "Begin the event sequence if it has not already started."
+    },
+    "Restart": {
+     "method": "Restart",
+     "params": [],
+     "tooltip": "Restart the event from the beginning. This also starts it if it hasn't started already."
+    },
+    "Stop": {
+     "method": "Stop",
+     "params": [],
+     "tooltip": "Stop the event sequence if it has begun, or prevent it from starting if it hasn't already."
+    }
+   }
+  },
+  "VTTimedEventGroup": {
+   "base": "UIOrganizedList.IOrganizedListItem",
+   "events": {
+    "Begin": {
+     "method": "Begin",
+     "params": [],
+     "tooltip": "Begin the sequence of timed events if it hasn't already begun."
+    },
+    "Stop": {
+     "method": "Stop",
+     "params": [],
+     "tooltip": "Stop the timed event sequence if it has started."
+    }
+   }
+  },
+  "VTUnitGroup": {
+   "base": null,
+   "events": {
+    "Add Designated Targets": {
+     "method": "AddDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds units to the air group AI's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."
+    },
+    "Add Non-Targets": {
+     "method": "AddNonTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds unit(s) to each AI pilots' non-targets lists.  They will never attack these targets."
+    },
+    "Add Non-targets": {
+     "method": "AddNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Add units to the list of units this group will not attack."
+    },
+    "Add Priority Targets": {
+     "method": "AddPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Adds unit(s) to each AI pilots' priority targets.  They will attack this target before others when those targets are detected."
+    },
+    "Attack Target": {
+     "method": "AttackTarget",
+     "params": [
+      {
+       "name": "tgt",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Order the air group to attack a specific target, regardless of detection or other threats."
+    },
+    "Cancel Attack Tgt": {
+     "method": "CancelAttackTarget",
+     "params": [],
+     "tooltip": "Cancel the override attack target and return to normal behavior."
+    },
+    "Clear Designated Targets": {
+     "method": "ClearDesignatedTargets",
+     "params": [],
+     "tooltip": "Clears the air group AI's designated targets."
+    },
+    "Clear Non-Targets": {
+     "method": "ClearNonTargets",
+     "params": [],
+     "tooltip": "Clears the AI pilots' non-target lists."
+    },
+    "Clear Non-targets": {
+     "method": "ClearNonTargets",
+     "params": [],
+     "tooltip": "Clear the list of units this group will not attack."
+    },
+    "Clear Priority Targets": {
+     "method": "ClearPriorityTargets",
+     "params": [],
+     "tooltip": "Clears the AI pilots' priority target lists."
+    },
+    "Fly Nav Path": {
+     "method": "FlyNavPath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Command the air group to fly a path in formation."
+    },
+    "Fly Orbit": {
+     "method": "FlyOrbit",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      },
+      {
+       "name": "radius",
+       "type": "System.Single"
+      },
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Command the air group to orbit a waypoint in formation."
+    },
+    "Force Alt Spawn": {
+     "method": "ForceAltSpawn",
+     "params": [
+      {
+       "name": "altSpawnNumber",
+       "type": "System.Int32"
+      }
+     ],
+     "tooltip": "Force all AI units in the group to a particular alternate spawn, overriding the random roll. This must be called BEFORE the units spawn."
+    },
+    "Form On Leader": {
+     "method": "FormOnLeader",
+     "params": [],
+     "tooltip": "Command the air group to form up on its AI wing leader."
+    },
+    "Form On Pilot": {
+     "method": "FormOnPilot",
+     "params": [
+      {
+       "name": "target",
+       "type": "UnitReference"
+      }
+     ],
+     "tooltip": "Command the air group to form up on a particular air unit."
+    },
+    "Kill All": {
+     "method": "KillAll",
+     "params": [],
+     "tooltip": "Kill all spawned AI units in the group."
+    },
+    "Land": {
+     "method": "Land",
+     "params": [
+      {
+       "name": "airport",
+       "type": "AirportReference"
+      }
+     ],
+     "tooltip": "Command the air group to land at a specified airfield."
+    },
+    "Move Path": {
+     "method": "MovePath",
+     "params": [
+      {
+       "name": "path",
+       "type": "FollowPath"
+      }
+     ],
+     "tooltip": "Command the group to move along a path."
+    },
+    "Move To": {
+     "method": "MoveTo",
+     "params": [
+      {
+       "name": "wpt",
+       "type": "Waypoint"
+      }
+     ],
+     "tooltip": "Command the group to move to a waypoint."
+    },
+    "Move To Point": {
+     "method": "MoveToPoint",
+     "params": [
+      {
+       "name": "point",
+       "type": "FixedPoint"
+      }
+     ],
+     "tooltip": "Command the group to move to an airbitrary point."
+    },
+    "Order Laser Designating": {
+     "method": "SetToLasingMode",
+     "params": [
+      {
+       "name": "laserCode",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set whether the pilots should only find and laser designate targets instead of attacking.  They will only designate ground units or slow moving aircraft. If they're in this state, commanding them to attack or engage/disengage will revert them to ordinary behavior."
+    },
+    "Randomize Alt Spawns": {
+     "method": "RandomizeAltSpawns",
+     "params": [],
+     "tooltip": "Re-roll the units' alt spawns. Must be called before spawning the unit. Useful for respawning units in random places."
+    },
+    "Rearm": {
+     "method": "RearmAt",
+     "params": [
+      {
+       "name": "airport",
+       "type": "AirportReference"
+      }
+     ],
+     "tooltip": "Command the air group to land at a specified airfield, rearm, and take off again."
+    },
+    "Remove Designated Targets": {
+     "method": "RemoveDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove a particular set of units from designated targets."
+    },
+    "Remove Non-targets": {
+     "method": "RemoveNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove units from to the list of units this group will not attack."
+    },
+    "Remove Priority Targets": {
+     "method": "RemovePriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Remove units from the list of units this group will prioritize when attacking."
+    },
+    "Set Altitude": {
+     "method": "SetAltitude",
+     "params": [
+      {
+       "name": "alt",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the air group's default altitude."
+    },
+    "Set Designated Targets": {
+     "method": "SetDesignatedTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the air group AI's designated targets, which it will attack at highest priority, immediately, whether or not these targets have been detected."
+    },
+    "Set Engage Enemies": {
+     "method": "SetEngageEnemies",
+     "params": [
+      {
+       "name": "engage",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the entire group should engage enemies"
+    },
+    "Set Formation": {
+     "method": "SetFormation",
+     "params": [
+      {
+       "name": "formation",
+       "type": "GroundSquad+GroundFormations"
+      }
+     ],
+     "tooltip": "Set the formation shape for this group. Units will begin to move to maintain this formation if they are not already moving."
+    },
+    "Set Invincible": {
+     "method": "SetInvincible",
+     "params": [
+      {
+       "name": "i",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set the invincibility of each AI unit in the group."
+    },
+    "Set Max Missiles Per Target": {
+     "method": "SetMaxMissilesPerTarget",
+     "params": [
+      {
+       "name": "t",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "By default, air groups will attempt to only fire 1 missile per target to conserve weapons. You can change that here."
+    },
+    "Set Movement Speed": {
+     "method": "SetMovementSpeed",
+     "params": [
+      {
+       "name": "moveSpeed",
+       "type": "GroundUnitSpawn+MoveSpeeds"
+      }
+     ],
+     "tooltip": "Set the movement speed of the unit group."
+    },
+    "Set Nav Speed": {
+     "method": "SetNavSpeed",
+     "params": [
+      {
+       "name": "speed",
+       "type": "System.Single"
+      }
+     ],
+     "tooltip": "Set the default navigation airspeed for the entire group (when not in combat)."
+    },
+    "Set Non-Targets": {
+     "method": "SetNonTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the AI pilots' non-target lists to a new list. They will never attack these targets."
+    },
+    "Set Non-targets": {
+     "method": "SetNonTargets",
+     "params": [
+      {
+       "name": "nonTargets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Set the list of units this group will not attack."
+    },
+    "Set Player Commands": {
+     "method": "SetPlayerCommands",
+     "params": [
+      {
+       "name": "mode",
+       "type": "AIAircraftSpawn+PlayerCommandsModes"
+      }
+     ],
+     "tooltip": "Set whether all units in this group can be commanded by the player."
+    },
+    "Set Priority Targets": {
+     "method": "SetPriorityTargets",
+     "params": [
+      {
+       "name": "targets",
+       "type": "UnitReferenceListOtherSubs"
+      }
+     ],
+     "tooltip": "Sets or replaces the AI pilots' priority target lists to a new list."
+    },
+    "Set Radar": {
+     "method": "SetRadar",
+     "params": [
+      {
+       "name": "radarOn",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Sets whether AI pilots equipped with radars in this group should turn them on or off."
+    },
+    "Set Radio Comms": {
+     "method": "SetRadioComms",
+     "params": [
+      {
+       "name": "radioEnabled",
+       "type": "System.Boolean"
+      }
+     ],
+     "tooltip": "Set whether the air group will communicate with the player via radio. (Units in the same group as Player do radio comms by default)"
+    },
+    "Spawn All": {
+     "method": "SpawnAll",
+     "params": [],
+     "tooltip": "Spawn all unspawned units in the group."
+    },
+    "Stop": {
+     "method": "Stop",
+     "params": [],
+     "tooltip": "Command all units in the group to stop."
+    },
+    "Take Off": {
+     "method": "TakeOff",
+     "params": [],
+     "tooltip": "Command the air group to take off."
+    }
+   }
+  }
+ },
+ "enums": {
+  "AIAircraftSpawn+FormationDistances": [
+   "Close",
+   "Medium",
+   "Far",
+   "Airshow"
+  ],
+  "AIAircraftSpawn+PlayerCommandsModes": [
+   "Unit_Group_Only",
+   "Force_Allow",
+   "Force_Disallow"
+  ],
+  "AIGroundECMSpawn+EMBandOptions": [
+   "Low",
+   "Mid",
+   "High"
+  ],
+  "AntiShipGuidance+ASMTerminalBehaviors": [
+   "Direct",
+   "SeaSkim",
+   "SSEvasive",
+   "Popup"
+  ],
+  "GroundSquad+GroundFormations": [
+   "Grid",
+   "Vee",
+   "EchelonRight",
+   "EchelonLeft",
+   "Spread",
+   "Column"
+  ],
+  "GroundUnitSpawn+MoveSpeeds": [
+   "Slow_10",
+   "Medium_20",
+   "Fast_30"
+  ],
+  "MPUITeams": [
+   "Team_A",
+   "Team_B"
+  ],
+  "PlayerSpawn+FlightStartModes": [
+   "Cold",
+   "FlightReady",
+   "FlightAP"
+  ],
+  "SmokeFlare+FlareColors": [
+   "Red",
+   "Blue",
+   "Orange",
+   "Yellow",
+   "White",
+   "Green",
+   "Purple"
+  ],
+  "Teams": [
+   "Allied",
+   "Enemy"
+  ],
+  "VTScenario+MFDTypes": [
+   "Main",
+   "Mini"
+  ]
+ }
+}

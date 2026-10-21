@@ -1,6 +1,6 @@
 [project]
 name = "pytol"
-version = "0.5.0"
+dynamic = ["version"]
 authors = [
   { name="Fran-98", email="franciscopvargas98@gmail.com" },
 ]
@@ -61,3 +61,6 @@ include = [
     "pytol/resources/*.json",
     "pytol/resources/*.png",
 ]
+
+[tool.hatch.version]
+path = "pytol/__init__.py"

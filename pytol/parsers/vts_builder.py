@@ -3,6 +3,7 @@ Core module for constructing and saving VTOL VR mission files (.vts).
 Includes automatic ID management for linked objects.
 """
 
+import dataclasses
 import os
 import shutil
 from dataclasses import fields, is_dataclass
@@ -13,7 +14,7 @@ from pytol.classes.conditionals import Conditional
 from pytol.classes.units import Unit
 from pytol.classes.objectives import Objective
 from pytol.classes.mission_objects import (
-    EventTarget, Path, Trigger,
+    EventTarget, ParamInfo, Path, Trigger,
     Waypoint, StaticObject, Base, BriefingNote,
     TimedEventGroup, GlobalValue, 
     ConditionalAction, EventSequence,
@@ -24,7 +25,7 @@ from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
 from pytol.terrain.terrain_calculator import TerrainCalculator
 from pytol.classes.units import UNIT_CLASS_TO_ACTION_CLASS
 from pytol.misc.logger import create_logger
-from pytol.resources.resources import get_static_prefabs_database
+from pytol.resources.resources import get_static_prefabs_database, load_json_data
 
 # --- Constants ---
 from pytol.classes.conditionals import CLASS_TO_ID
@@ -107,6 +108,30 @@ def _format_id_list(ids: List[Any]) -> str:
     """Formats a list of IDs into a VTS-compatible string."""
     return ";".join(map(str, ids))
 
+# [VTEvent] actions extracted from the game (tools/extract_vt_events.py in pytol-mission):
+# class -> {'base', 'events': {display name: {'method', 'params': [{'name', 'type'}]}}}
+VT_EVENTS = load_json_data('vt_events.json')['classes']
+# Object the game calls the method on, per VTEventTarget.TargetTypes (units resolve to their own class).
+_TARGET_TYPE_CLASS = {
+    'Objective': 'VTObjective', 'UnitGroup': 'VTUnitGroup', 'Timed_Events': 'VTTimedEventGroup',
+    'Trigger_Events': 'ScenarioTriggerEvents', 'Event_Sequences': 'VTSequencedEvent', 'System': 'VTScenario',
+    'Base': 'VTMapEdScenarioBasePrefab', 'Static_Object': 'VTSODestructible',
+}
+# ParamInfo.type is read back with System.Type.GetType, so it must be the .NET type name.
+_PRIMITIVE_TYPES = {'string': 'System.String', 'bool': 'System.Boolean', 'float': 'System.Single',
+                    'int': 'System.Int32', 'double': 'System.Double'}
+
+
+def _resolve_vt_event(class_name: Optional[str], event_name: str) -> Optional[dict]:
+    """Event definition for a display name, walking up the class hierarchy."""
+    while class_name in VT_EVENTS:
+        event = VT_EVENTS[class_name]['events'].get(event_name)
+        if event:
+            return event
+        class_name = VT_EVENTS[class_name]['base']
+    return None
+
+
 def _format_block(name: str, content_str: str, indent_level: int = 1) -> str:
     """Helper function to format a VTS block with correct indentation."""
     indent = "\t" * indent_level
@@ -115,8 +140,14 @@ def _format_block(name: str, content_str: str, indent_level: int = 1) -> str:
         return f"{indent}{name}{eol}{indent}{{{eol}{indent}}}{eol}"
     return f"{indent}{name}{eol}{indent}{{{eol}{content_str}{indent}}}{eol}"
 
+# C# field names that don't follow the plain camelCase rule.
+_CAMEL_OVERRIDES = {'b_eq_assignment_mode': 'b_eqAssignmentMode'}
+
+
 def _snake_to_camel(snake_str: str) -> str:
     """Converts a snake_case string to camelCase."""
+    if snake_str in _CAMEL_OVERRIDES:
+        return _CAMEL_OVERRIDES[snake_str]
     components = snake_str.split('_')
     return components[0] + ''.join(x.title() for x in components[1:])
 
@@ -233,7 +264,7 @@ class Mission:
         self.campaign_id = ""
         self.campaign_order_idx = -1
         self.multiplayer = False
-        self.allowed_equips = "gau-8;m230;h70-x7;h70-4x4;h70-x19;mk82x1;mk82x2;mk82x3;mk82HDx1;mk82HDx2;mk82HDx3;agm89x1;gbu38x1;gbu38x2;gbu38x3;gbu39x3;gbu39x4u;cbu97x1;hellfirex4;maverickx1;maverickx3;cagm-6;sidewinderx1;sidewinderx2;sidewinderx3;iris-t-x1;iris-t-x2;iris-t-x3;sidearmx1;sidearmx2;sidearmx3;marmx1;av42_gbu12x1;av42_gbu12x2;av42_gbu12x3;42c_aim9ex2;42c_aim9ex1;"
+        self.allowed_equips = ""  # filled from the vehicle in _save_to_file when left empty
         self.forced_equips = ";;;;;;;"  # Forced equipment slots (semicolon-separated)
         self.force_equips = False
         self.norm_forced_fuel = 1
@@ -1087,19 +1118,22 @@ class Mission:
                     return user_provided_id
                 else:
                     raise ValueError(f"{obj_type_name} ID {user_provided_id} is already assigned to a different object.")
-            # If no ID provided, check if this exact object was already added (by identity)
-            if isinstance(target_list_or_dict, list) and isinstance(target_map, dict):
-                for existing_id, existing_obj in target_map.items():
-                    if existing_obj is obj:
-                        return existing_id
+            # Same object added before (by identity) -> same ID, never a duplicate entry
+            known = target_list_or_dict.items() if isinstance(target_list_or_dict, dict) else target_map.items()
+            for existing_id, existing_obj in known:
+                if existing_obj is obj:
+                    return existing_id
 
         # --- Assign New ID ---
         assigned_id = user_provided_id
         if assigned_id is None:
             # Get the next available integer ID from the counter
-            counter = self._id_counters[obj_type_name]
-            assigned_id = counter # Assign the integer ID
-            self._id_counters[obj_type_name] += 1 # Increment for next time
+            # Next free integer ID (user-chosen IDs may already occupy some)
+            taken = target_list_or_dict if isinstance(target_list_or_dict, dict) else target_map
+            while self._id_counters[obj_type_name] in taken:
+                self._id_counters[obj_type_name] += 1
+            assigned_id = self._id_counters[obj_type_name]
+            self._id_counters[obj_type_name] += 1
 
             # Print appropriate message based on type
             if id_type == "int":
@@ -1281,7 +1315,7 @@ class Mission:
             self.logger.info(f"Placing unit {uid} ('{unit_obj.unit_name}') on sea at ({x:.2f}, {z:.2f}).")
             adjusted_y = self.tc.get_terrain_height(x, z)
             final_pos[1] = max(adjusted_y, 0) # Use terrain height but >= 0
-            editor_mode = "Water"
+            editor_mode = "Sea"
             # Sea is flat, clear X/Z rotation, keep original yaw
             final_rot = [0.0, initial_yaw, 0.0]
 
@@ -1468,11 +1502,7 @@ class Mission:
             raise TypeError("objective_obj must be an Objective dataclass.")
         # Store team hint (if provided) inside the objective's fields dict
         if team is not None:
-            try:
-                objective_obj.fields['team'] = team
-            except Exception:
-                # Be conservative: if fields is missing, set attribute directly
-                setattr(objective_obj, 'team', team)
+            objective_obj.team = team
 
         # Objective ID is required and comes *from* the object
         assigned_id = self._get_or_assign_id(objective_obj, "_pytol_obj")
@@ -1531,8 +1561,10 @@ class Mission:
             self.bases.append(base_obj)
             self.logger.info(f"Base override set for id={base_obj.id} (team={base_obj.team}, name={base_obj.name or ''}).")
 
-    def add_briefing_note(self, note_obj: BriefingNote): # Unchanged logic, just type hint
-        """Adds a BriefingNote object."""
+    def add_briefing_note(self, note_obj: Union[BriefingNote, str]):
+        """Adds a BriefingNote (a plain string becomes a text-only note)."""
+        if isinstance(note_obj, str):
+            note_obj = BriefingNote(text=note_obj)
         if not isinstance(note_obj, BriefingNote):
             raise TypeError("note_obj must be a BriefingNote dataclass.")
         self.briefing_notes.append(note_obj)
@@ -1703,15 +1735,9 @@ class Mission:
                 # Special handling for method_parameters - needs nested block structure
                 if key_name_snake == 'method_parameters' and isinstance(value, list):
                     key_name_final = _snake_to_camel(key_name_snake)
-                    param_value = ";".join(map(str, value)) + ";"
-                    # methodParameters label and brace align with inner COMP lines; value is one deeper
-                    indent_param = indent_comp_inner + "\t"
-                    method_params_block = (
-                        f"{indent_comp_inner}{key_name_final}{eol}"
-                        f"{indent_comp_inner}{{{eol}"
-                        f"{indent_param}value = {param_value}{eol}"
-                        f"{indent_comp_inner}}}"
-                    )
+                    method_params_block = eol.join(
+                        f"{indent_comp_inner}{key_name_final}{eol}{indent_comp_inner}{{{eol}"
+                        f"{indent_comp_inner}\tvalue = {v}{eol}{indent_comp_inner}}}" for v in value)
                     continue
                 
                 # Special case: c_value should remain in snake_case in VTS format
@@ -1801,15 +1827,9 @@ class Mission:
                     # Special handling for method_parameters - needs nested block structure
                     # Store it separately to add AFTER isNot
                     if key_name_snake == 'method_parameters' and isinstance(value, list):
-                        param_value = ";".join(map(str, value)) + ";"
-                        # methodParameters label and brace align with inner COMP lines; value is one deeper
-                        indent_param = indent_comp_inner + "\t"
-                        method_params_block = (
-                            f"{indent_comp_inner}{key_name_final}{eol}"
-                            f"{indent_comp_inner}{{{eol}"
-                            f"{indent_param}value = {param_value}{eol}"
-                            f"{indent_comp_inner}}}"
-                        )
+                        method_params_block = eol.join(
+                            f"{indent_comp_inner}{key_name_final}{eol}{indent_comp_inner}{{{eol}"
+                            f"{indent_comp_inner}\tvalue = {v}{eol}{indent_comp_inner}}}" for v in value)
                         continue
                     
                     # Special handling for global value references
@@ -1854,6 +1874,76 @@ class Mission:
         )
         
         return f"{indent_conditional}CONDITIONAL{eol}{indent_conditional}{{{eol}{conditional_content_str}{indent_conditional}}}{eol}"
+
+    def _resolve_link_id(self, value: Any) -> Any:
+        """Replace linked pytol objects by the ID the .vts uses for them."""
+        if isinstance(value, Waypoint):
+            return self._get_or_assign_id(value, "_pytol_wpt")
+        if isinstance(value, Path):
+            return self._get_or_assign_id(value, "_pytol_path")
+        if isinstance(value, Conditional):
+            return self._get_or_assign_id(value, "_pytol_cond")
+        if isinstance(value, Unit):
+            found = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is value), None)
+            if found is None:
+                self.logger.warning(f"Unit '{value.unit_name}' is referenced by an action but was never added.")
+            return found
+        if isinstance(value, GlobalValue):
+            value = value.name
+        if isinstance(value, str) and value in self.global_values:
+            return list(self.global_values).index(value)
+        return value
+
+    def _format_event_target(self, target: EventTarget, eol: str = "\n") -> str:
+        """One EventTarget node as the game saves it (VTEventTarget.SaveToNode)."""
+        target_type, target_id, params = target.target_type, target.target_id, list(target.params)
+        event_name = target.event_name
+        if target_type == "GlobalValue":
+            # The game has no GlobalValue target: these are VTScenario (System) methods taking the GV as a parameter.
+            event = _resolve_vt_event('VTScenario', event_name)
+            gv = ParamInfo(name="gv", type="GlobalValue", value=target_id)
+            names = [p['name'] for p in event['params']] if event else []
+            params = params + [gv] if 'dest' in names else [gv] + params
+            target_type, target_id = "System", 0
+        target_id = self._resolve_link_id(target_id)
+
+        if target_type == "Unit":
+            target_id = int(target_id)
+            unit = next((u['unit_obj'] for u in self.units if u['unitInstanceID'] == target_id), None)
+            # First class in the unit's hierarchy the game still has (renamed classes fall back to their parent).
+            class_name = next((c.__name__ for c in type(unit).__mro__ if c.__name__ in VT_EVENTS), None) if unit is not None else None
+        else:
+            class_name = _TARGET_TYPE_CLASS.get(target_type)
+        event = _resolve_vt_event(class_name, event_name)
+        if event is None and not target.method_name:
+            self.logger.warning(f"Unknown action '{event_name}' for {target_type} ({class_name}); the game will ignore it.")
+        method = target.method_name or (event['method'] if event else event_name.replace(' ', ''))
+        if event and len(event['params']) != len(params):
+            self.logger.warning(f"Action '{event_name}' expects {len(event['params'])} parameters, got {len(params)}.")
+
+        params_c = ""
+        for i, p in enumerate(params):
+            if event and i < len(event['params']):
+                game_type = event['params'][i]['type']
+            else:
+                game_type = _PRIMITIVE_TYPES.get(p.type, p.type)
+            value = p.value
+            if isinstance(value, (list, tuple)):
+                value = "".join(f"{_format_value(self._resolve_link_id(v))};" for v in value)
+            else:
+                value = _format_value(self._resolve_link_id(value))
+            attr = ""
+            if p.attr_info and p.attr_info.get('type') and p.attr_info.get('data'):
+                attr = (f"\t\t\t\t\t\tParamAttrInfo{eol}\t\t\t\t\t\t{{{eol}\t\t\t\t\t\t\ttype = {p.attr_info['type']}{eol}"
+                        f"\t\t\t\t\t\t\tdata = {p.attr_info['data']}{eol}\t\t\t\t\t\t}}{eol}")
+            params_c += (f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}\t\t\t\t\t\ttype = {game_type}{eol}"
+                         f"\t\t\t\t\t\tvalue = {value}{eol}\t\t\t\t\t\tname = {p.name}{eol}{attr}\t\t\t\t\t}}{eol}")
+
+        alt_idx = target.alt_target_idx if target.alt_target_idx is not None else (-2 if target_type == "Unit" else -1)
+        return (f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}\t\t\t\t\ttargetType = {target_type}{eol}"
+                f"\t\t\t\t\ttargetID = {_format_value(target_id)}{eol}\t\t\t\t\teventName = {event_name}{eol}"
+                f"\t\t\t\t\tmethodName = {method}{eol}\t\t\t\t\taltTargetIdx = {int(alt_idx)}{eol}"
+                f"{params_c}\t\t\t\t}}{eol}")
 
     def _generate_content_string(self) -> Dict[str, str]:
         """Internal function to generate the content for all VTS blocks."""
@@ -1900,330 +1990,66 @@ class Mission:
                             t_label = t_upper.title()
                         reverse_group_map[resolved_id] = f"{t_label}:{gname}"
 
-        # --- UNITS --- (No ID changes needed)
-        # Attempt to load a reference-corrected VTS (if present) to support
-        # exact parity testing. If a file named '*_corrected.vts' exists in
-        # the test output directory, we will parse UnitFields from it and
-        # prefer its literal field tokens during emission. This is an
-        # optional testing aid and does not change behavior when no file is
-        # present.
-        reference_unit_fields = {}
-        reference_unit_spawners = {}
-        try:
-            # Heuristic: look for a corrected VTS next to the test output path
-            corrected_path = ".test_missions/test_missions_out/test_unitgroups/test_unitgroups_corrected.vts"
-            if os.path.exists(corrected_path):
-                def _parse_corrected_units(path):
-                    """Parse UnitSpawner blocks from a corrected VTS and return two maps:
-                    - unit_fields_map: unitName -> dict of raw UnitFields tokens
-                    - unit_spawner_map: unitName -> dict of raw UnitSpawner-level tokens
-                    """
-                    fields_out = {}
-                    spawner_out = {}
-                    with open(path, 'r', encoding='utf-8') as fh:
-                        lines = fh.readlines()
-                    i = 0
-                    while i < len(lines):
-                        line = lines[i].strip()
-                        if line == 'UnitSpawner':
-                            # advance to block
-                            i += 1
-                            # skip until opening '{'
-                            while i < len(lines) and lines[i].strip() != '{':
-                                i += 1
-                            i += 1
-                            unit_name = None
-                            fields_map = {}
-                            spawner_map = {}
-                            depth = 1
-                            in_unitfields = False
-                            # read until closing '}' of UnitSpawner
-                            while i < len(lines) and depth > 0:
-                                line_raw = lines[i]
-                                stripped = line_raw.strip()
-                                # detect start of UnitFields block
-                                if stripped == 'UnitFields':
-                                    in_unitfields = True
-                                    # skip until '{'
-                                    while i < len(lines) and lines[i].strip() != '{':
-                                        i += 1
-                                    i += 1
-                                    # read unit fields until matching '}'
-                                    while i < len(lines) and lines[i].strip() != '}':
-                                        line_f = lines[i].strip()
-                                        if '=' in line_f:
-                                            k, v = line_f.split('=', 1)
-                                            outk = k.strip()
-                                            outv = v.strip()
-                                            # store raw token for later exact emission
-                                            fields_map[outk] = outv
-                                        i += 1
-                                    in_unitfields = False
-                                else:
-                                    # capture top-level UnitSpawner tokens (before UnitFields)
-                                    if not in_unitfields and '=' in stripped:
-                                        try:
-                                            k, v = stripped.split('=', 1)
-                                            spawner_map[k.strip()] = v.strip()
-                                        except Exception:
-                                            pass
-                                if stripped == '{':
-                                    depth += 1
-                                if stripped == '}':
-                                    depth -= 1
-                                i += 1
-                            if unit_name is None and spawner_map.get('unitName'):
-                                unit_name = spawner_map.get('unitName')
-                            # store maps if we have a unit name
-                            if unit_name:
-                                fields_out[unit_name] = fields_map
-                                spawner_out[unit_name] = spawner_map
-                        else:
-                            i += 1
-                    return fields_out, spawner_out
-
-                reference_unit_fields, reference_unit_spawners = _parse_corrected_units(corrected_path)
-        except Exception:
-            reference_unit_fields = {}
-        units_c = ""
-        try:
-            self.logger.info(f"UNITS: preparing to emit {len(self.units)} spawners")
-        except Exception:
-            pass
-        units_emitted = 0
+        # --- UNITS --- (UnitSpawner.SaveToParentConfigNode)
+        from pytol.classes.units import field_names
+        from pytol.resources.resources import load_unit_prefab_database
+        prefab_teams = load_unit_prefab_database()
         unit_blocks: List[str] = []
         for u_data in self.units:
             u = u_data['unit_obj']
-            uid = int(u_data.get('unitInstanceID'))
-            
+            uid = int(u_data['unitInstanceID'])
+            unit_fields = {**(u_data.get('unit_fields') or {}), **(getattr(u, 'unit_fields', {}) or {})}
+            group = reverse_group_map.get(uid) or unit_fields.get('unit_group') or unit_fields.get('unitGroup')
 
-            # --- Dynamic field order extraction from class hierarchy ---
-            from pytol.classes.units import field_names
-            fields_c = ""
-            derived_group = reverse_group_map.get(uid)
-            # Preserve explicit None values from unit_fields (we want to emit
-            # the literal 'null' in the VTS when unit_group was explicitly
-            # set to None). Do not coerce None -> "" via `or`.
-            # Merge any spawn-provided raw unit_fields (u_data may contain a
-            # unit_fields dict passed at add_unit time) with the dataclass
-            # computed `u.unit_fields`. Prefers dataclass values when both
-            # present but still recognizes keys provided at either level.
-            u_unit_fields_raw = u_data.get('unit_fields') if isinstance(u_data.get('unit_fields'), dict) else {}
-            u_unit_fields = getattr(u, 'unit_fields', {}) or {}
-            merged_unit_fields = {}
-            merged_unit_fields.update(u_unit_fields_raw)
-            merged_unit_fields.update(u_unit_fields)
-            explicit_group = None
-            if isinstance(merged_unit_fields, dict):
-                # Prefer snake_case key first
-                if 'unit_group' in merged_unit_fields:
-                    explicit_group = merged_unit_fields.get('unit_group')
-                elif 'unitGroup' in merged_unit_fields:
-                    explicit_group = merged_unit_fields.get('unitGroup')
-            # Only fall back to empty string when the unit_group key is absent
-            # and no derived group exists. If the key exists with value None,
-            # keep None so it serializes to 'null'.
-            if derived_group is not None:
-                group_to_emit = derived_group
-            elif ('unit_group' in u_unit_fields) or ('unitGroup' in u_unit_fields):
-                # Treat explicit empty-string group as unset -> None so we
-                # serialize 'null' rather than an empty token.
-                if isinstance(explicit_group, str) and explicit_group.strip() == '':
-                    group_to_emit = None
-                else:
-                    group_to_emit = explicit_group
-            else:
-                # If no explicit or derived group exists, emit null so the
-                # VTS contains the literal 'null' token rather than an empty
-                # string. This matches the editor's representation for unset
-                # unit groups and avoids empty-string corruption.
-                group_to_emit = None
-
-            # Build the full field order for this unit's class, respecting inheritance
+            # Field order follows the class hierarchy, most derived class first.
             field_order = []
-            seen = set()
-            cls_to_check = u.__class__
-            while cls_to_check.__name__ != "Unit" and cls_to_check is not object:
-                for fname in field_names.get(cls_to_check.__name__, []):
-                    if fname not in seen:
-                        field_order.append(fname)
-                        seen.add(fname)
-                if not cls_to_check.__mro__[1] or cls_to_check.__mro__[1] is object:
+            for cls in type(u).__mro__:
+                if cls.__name__ == "Unit":
                     break
-                cls_to_check = cls_to_check.__mro__[1]
+                field_order += [f for f in field_names.get(cls.__name__, []) if f not in field_order]
+            defaults = {f.name: (f.default if f.default is not dataclasses.MISSING else
+                                 f.default_factory() if f.default_factory is not dataclasses.MISSING else None)
+                        for f in dataclasses.fields(u)}
 
-            # Always emit unitGroup first if present in field_order or in unit_fields,
-            # but if we have a literal UnitFields block from a corrected VTS for this
-            # unit, prefer its exact tokens (which already include unitGroup) and
-            # skip emitting a duplicate here.
-            ref_has_unit = bool(reference_unit_fields and u.unit_name in reference_unit_fields)
-            # Decide whether to emit a UnitFields token for unitGroup. We
-            # consider the merged_unit_fields as well as the dataclass-derived
-            # field_order to determine if the editor expects a unitGroup token.
-            if not ref_has_unit and ("unit_group" in field_order or "unitGroup" in field_order or "unit_group" in merged_unit_fields or "unitGroup" in merged_unit_fields):
-                # When group_to_emit is None we must emit the literal 'null'
-                # token in the VTS file. Otherwise emit the value as-is to
-                # preserve parity with editor exports.
-                # Treat any falsy/empty value as unset -> emit 'null'. This is
-                # intentionally permissive to cover empty strings, empty lists,
-                # or other falsy tokens that don't represent a valid group.
-                if not group_to_emit:
-                    fields_c += f"\t\t\t\tunitGroup = null{eol}"
-                else:
-                    fields_c += f"\t\t\t\tunitGroup = {group_to_emit}{eol}"
-                for k in ["unit_group", "unitGroup"]:
-                    if k in field_order:
-                        field_order.remove(k)
+            fields_c = ""
+            if {'unit_group', 'unitGroup'} & (set(field_order) | set(unit_fields)):
+                fields_c += f"\t\t\t\tunitGroup = {group or 'null'}{eol}"
+            for field_name in field_order:
+                if field_name in ('unit_group', 'unitGroup'):
+                    continue
+                v = unit_fields.get(field_name)
+                if field_name == 'player_commands_mode' and not v and group:
+                    v = 'Unit_Group_Only'
+                if v is None:
+                    v = defaults.get(field_name)
+                if field_name == 'equips' and not v:
+                    continue  # no key = the AI keeps its prefab loadout (AIUnitSpawnEquippable)
+                if isinstance(v, (list, tuple)):
+                    v = "".join(f"{x};" for x in v)
+                fields_c += f"\t\t\t\t{_snake_to_camel(field_name)} = {_format_value(v)}{eol}"
 
-            # --- Dynamically extract default values from dataclass fields ---
-            import dataclasses
-            def get_field_default(cls, field_name):
-                for f in dataclasses.fields(cls):
-                    if f.name == field_name:
-                        if f.default is not dataclasses.MISSING:
-                            return f.default
-                        elif f.default_factory is not dataclasses.MISSING:  # type: ignore
-                            return f.default_factory()  # type: ignore
-                        else:
-                            return None
-                # If not found in this class, check base classes
-                for base in cls.__mro__[1:]:
-                    if hasattr(base, '__dataclass_fields__'):
-                        for f in dataclasses.fields(base):
-                            if f.name == field_name:
-                                if f.default is not dataclasses.MISSING:
-                                    return f.default
-                                elif f.default_factory is not dataclasses.MISSING:  # type: ignore
-                                    return f.default_factory()  # type: ignore
-                                else:
-                                    return None
-                return None
-
-            def to_camel(s):
-                parts = s.split('_')
-                return parts[0] + ''.join(x.title() for x in parts[1:]) if len(parts) > 1 else s
-
-            # Emit all fields in order, using value if set, else dataclass default, else null/empty
-            # If a reference-corrected VTS was parsed earlier, prefer literal tokens
-            # from that file for exact parity testing.
-            ref_fields_for_unit = reference_unit_fields.get(u.unit_name, {}) if reference_unit_fields else {}
-            # If we have a literal UnitFields block from a corrected VTS, prefer
-            # emitting those tokens verbatim (including their order) for exact parity.
-            if ref_fields_for_unit:
-                for outk, outv in ref_fields_for_unit.items():
-                    fields_c += f"\t\t\t\t{outk} = {outv}{eol}"
-            else:
-                for field_name in field_order:
-                    camel_field = to_camel(field_name)
-                    # If this is the player_commands_mode field and the unit belongs to a group,
-                    # prefer to emit the grouped editor behavior here so the field appears in its
-                    # canonical position (per dataclass / field_order) rather than being injected earlier.
-                    if field_name == 'player_commands_mode':
-                        v = u.unit_fields.get(field_name)
-                        if (not v) and group_to_emit:
-                            # Use editor label
-                            v = 'Unit_Group_Only'
-                    else:
-                        v = u.unit_fields.get(field_name)
-                    # If a reference file provided a literal token for this field, use it
-                    if ref_fields_for_unit and camel_field in ref_fields_for_unit:
-                        fields_c += f"\t\t\t\t{camel_field} = {ref_fields_for_unit[camel_field]}{eol}"
-                        continue
-
-                    if v is not None:
-                        # Special: equips as list
-                        if field_name == 'equips' and isinstance(v, list):
-                            v = ";".join(map(str, v)) + ";"
-                        # Aggressive parity overrides: force certain fields to match
-                        # editor-saved conventions (Option A fallback). This helps
-                        # converge to exact reference files when prefab defaults
-                        # differ from the reference. These overrides are intentionally
-                        # conservative and limited in scope.
-                        # Aggressive parity overrides: when prefer_editor_field_parity is enabled,
-                        # force certain fields to explicit False so emitted files match editor-saved
-                        # conventions when our dataclass defaults are absent.
-                        if self.prefer_editor_field_parity and camel_field in ('autoRTB', 'respawnable'):
-                            v = False
-                        fields_c += f"\t\t\t\t{camel_field} = {_format_value(v)}{eol}"
-                    else:
-                        # Dynamically get default from dataclass
-                        default_val = get_field_default(u.__class__, field_name)
-                        if field_name == 'equips':
-                            fields_c += f"\t\t\t\tequips = {default_val if default_val is not None else ''}{eol}"
-                        elif default_val is not None:
-                            fields_c += f"\t\t\t\t{camel_field} = {_format_value(default_val)}{eol}"
-                        else:
-                            # Some boolean-like fields are explicit in editor files even when
-                            # our dataclass/default is absent. If prefer_editor_field_parity is
-                            # enabled emit explicit False for these to better match common
-                            # editor output. Also, the editor often emits an explicit empty
-                            # 'rtbDestination' token for aircraft — prefer an empty token
-                            # (not 'null') when parity is requested.
-                            if field_name in ('auto_rtb', 'respawnable') and self.prefer_editor_field_parity:
-                                fields_c += f"\t\t\t\t{camel_field} = False{eol}"
-                            elif field_name == 'rtb_destination' and self.prefer_editor_field_parity:
-                                fields_c += f"\t\t\t\t{camel_field} = {eol}"
-                            else:
-                                fields_c += f"\t\t\t\t{camel_field} = null{eol}"
-
-            # Conditionally emit spawnChance and spawnFlags only when non-default
-            spawn_lines = ""
-            spawn_chance = int(u_data.get('spawn_chance', 100))
-            spawn_flags = u_data.get('spawn_flags') or ''
-            if spawn_chance != 100:
-                spawn_lines += f"\t\t\tspawnChance = {spawn_chance}{eol}"
-            if spawn_flags:
-                spawn_lines += f"\t\t\tspawnFlags = {spawn_flags}{eol}"
-
-            # If a corrected reference VTS provided literal UnitSpawner tokens, prefer
-            # those exact tokens for parity. Otherwise, format values normally.
-            ref_spawner_for_unit = reference_unit_spawners.get(u.unit_name, {}) if reference_unit_spawners else {}
-            spawner_lines_list: List[str] = []
-            # Final sanity: convert any accidentally-emitted empty 'unitGroup = '
-            # tokens into explicit nulls so the editor receives 'unitGroup = null'.
-            # This is a last-resort fix to catch stray empty emissions that slipped
-            # through upstream checks.
-            fields_c = fields_c.replace(f"\t\t\t\tunitGroup = {eol}", f"\t\t\t\tunitGroup = null{eol}")
-            spawner_lines_list.append(f"\t\tUnitSpawner{eol}\t\t{{{eol}")
-            spawner_lines_list.append(f"\t\t\tunitName = {u.unit_name}{eol}")
-            # globalPosition
-            if ref_spawner_for_unit and 'globalPosition' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\tglobalPosition = {ref_spawner_for_unit['globalPosition']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\tglobalPosition = {_format_vector(u.global_position)}{eol}")
-            spawner_lines_list.append(f"\t\t\tunitInstanceID = {u_data['unitInstanceID']}{eol}")
-            spawner_lines_list.append(f"\t\t\tunitID = {u.unit_id}{eol}")
-            # rotation
-            if ref_spawner_for_unit and 'rotation' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\trotation = {ref_spawner_for_unit['rotation']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\trotation = {_format_vector(u.rotation, is_rotation=True)}{eol}")
-            # spawn lines already formatted with proper indentation
-            if spawn_lines:
-                spawner_lines_list.append(spawn_lines)
-            # lastValidPlacement
-            if ref_spawner_for_unit and 'lastValidPlacement' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\tlastValidPlacement = {ref_spawner_for_unit['lastValidPlacement']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\tlastValidPlacement = {_format_vector(u_data['lastValidPlacement'])}{eol}")
-            # editorPlacementMode/onCarrier/mpSelectEnabled
-            if ref_spawner_for_unit and 'editorPlacementMode' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\teditorPlacementMode = {ref_spawner_for_unit['editorPlacementMode']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\teditorPlacementMode = {u_data['editorPlacementMode']}{eol}")
-            if ref_spawner_for_unit and 'onCarrier' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\tonCarrier = {ref_spawner_for_unit['onCarrier']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\tonCarrier = {u_data['onCarrier']}{eol}")
-            if ref_spawner_for_unit and 'mpSelectEnabled' in ref_spawner_for_unit:
-                spawner_lines_list.append(f"\t\t\tmpSelectEnabled = {ref_spawner_for_unit['mpSelectEnabled']}{eol}")
-            else:
-                spawner_lines_list.append(f"\t\t\tmpSelectEnabled = {u_data['mpSelectEnabled']}{eol}")
-            # UnitFields block (literal tokens inside are already preferred above)
-            spawner_lines_list.append(_format_block('UnitFields', fields_c, 3))
-            spawner_lines_list.append(f"\t\t}}{eol}")
-            unit_blocks.append("".join(spawner_lines_list))
-        # Join after the loop to avoid any indentation mishaps
+            lines = [f"\t\tUnitSpawner{eol}\t\t{{{eol}",
+                     f"\t\t\tunitName = {u.unit_name}{eol}",
+                     f"\t\t\tglobalPosition = {_format_vector(u.global_position)}{eol}",
+                     f"\t\t\tunitInstanceID = {uid}{eol}",
+                     f"\t\t\tunitID = {u.unit_id}{eol}",
+                     f"\t\t\trotation = {_format_vector(u.rotation, is_rotation=True)}{eol}"]
+            if int(u_data.get('spawn_chance', 100)) != 100:
+                lines.append(f"\t\t\tspawnChance = {int(u_data['spawn_chance'])}{eol}")
+            if u_data.get('spawn_flags'):
+                lines.append(f"\t\t\tspawnFlags = {u_data['spawn_flags']}{eol}")
+            lines.append(f"\t\t\tlastValidPlacement = {_format_vector(u_data['lastValidPlacement'])}{eol}")
+            lines.append(f"\t\t\teditorPlacementMode = {u_data['editorPlacementMode']}{eol}")
+            # The prefab fixes the team; 'team' is only written when a switchable unit is moved to the other side.
+            prefab_team = next((t for t in ('Allied', 'Enemy') if u.unit_id in prefab_teams.get(t, [])), None)
+            team = getattr(u, 'team', None)
+            if team and prefab_team and team.title() != prefab_team and u.unit_id not in prefab_teams.get(team.title(), []):
+                lines.append(f"\t\t\tteam = {team.title()}{eol}")
+            lines.append(f"\t\t\tonCarrier = {u_data['onCarrier']}{eol}")
+            lines.append(f"\t\t\tmpSelectEnabled = {u_data['mpSelectEnabled']}{eol}")
+            lines.append(_format_block('UnitFields', fields_c, 3))
+            lines.append(f"\t\t}}{eol}")
+            unit_blocks.append("".join(lines))
         units_c = "".join(unit_blocks)
         units_emitted = len(unit_blocks)
 
@@ -2298,7 +2124,7 @@ class Mission:
                     # Ground -> 0;  Water (sea) -> 1;  Air/other -> 2
                     if first_unit_placement == "Ground":
                         prefix = "0"
-                    elif first_unit_placement == "Water":
+                    elif first_unit_placement == "Sea":
                         prefix = "1"
                     else:
                         prefix = "2"
@@ -2349,24 +2175,7 @@ class Mission:
 
             props_c = "".join([f"\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}" for k, v in resolved_props.items()])
 
-            targets_c = "" # EventTarget formatting with altTargetIdx
-            for target in t.event_targets:
-                params_c = ""
-                for p in target.params:
-                    # Convert list values to semicolon format (e.g., [2] -> "2;")
-                    formatted_value = _format_id_list(p.value) + ";" if isinstance(p.value, list) else _format_value(p.value)
-                    params_c += (f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}"
-                                 f"\t\t\t\t\t\ttype = {p.type}{eol}"
-                                 f"\t\t\t\t\t\tvalue = {formatted_value}{eol}"
-                                 f"\t\t\t\t\t\tname = {p.name}{eol}"
-                                 f"\t\t\t\t\t}}{eol}")
-                targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
-                            f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                            f"\t\t\t\t\ttargetID = {target.target_id}{eol}" \
-                            f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                            f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                            f"\t\t\t\t\taltTargetIdx = -1{eol}" \
-                            f"{params_c}\t\t\t\t}}{eol}"
+            targets_c = "".join(self._format_event_target(target, eol) for target in t.event_targets)
             event_info = _format_block('EventInfo', f"\t\t\t\teventName = {eol}{targets_c}", 3)
 
             # Add ListOrderIndex and ListFolderName, use eventName instead of name
@@ -2392,63 +2201,7 @@ class Mission:
         for group in self.timed_event_groups: # group is TimedEventGroup
             events_c = ""
             for event_info in group.events: # event_info is TimedEventInfo
-                targets_c = ""
-                for target in event_info.event_targets: # target is EventTarget
-                    params_c = ""
-                    for p in target.params: # p is ParamInfo
-                        # Resolve potential object links in param values
-                        param_value = p.value
-                        if isinstance(p.value, Waypoint):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_wpt")
-                        elif isinstance(p.value, Path):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_path")
-                        # TODO: Handle Unit or other object links if needed for specific actions
-
-                        # Handle special ParamAttrInfo block if necessary (VTS specific)
-                        # For now, just format the basic ParamInfo
-                        # Convert list values to semicolon format (e.g., [2] -> "2;")
-                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
-                        param_info_block = f"\t\t\t\t\t\tParamInfo{eol}\t\t\t\t\t\t{{{eol}" \
-                                        f"\t\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                        f"\t\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
-                                        f"\t\t\t\t\t\t\tname = {p.name}{eol}"
-                        
-                        if p.attr_info:
-                            attr_type = p.attr_info.get('type')
-                            attr_data = p.attr_info.get('data')
-                            if attr_type and attr_data:
-                                param_info_block += f"\t\t\t\t\t\t\tParamAttrInfo{eol}\t\t\t\t\t\t\t{{{eol}" \
-                                                    f"\t\t\t\t\t\t\t\ttype = {attr_type}{eol}" \
-                                                    f"\t\t\t\t\t\t\t\tdata = {attr_data}{eol}" \
-                                                    f"\t\t\t\t\t\t\t}}{eol}"
-                        
-                        param_info_block += f"\t\t\t\t\t\t}}{eol}"
-                        params_c += param_info_block
-
-                    # Handle UnitGroup Target ID (using manual integer for now)
-                    target_id_val = target.target_id
-                    if target.target_type == "UnitGroup" and not isinstance(target.target_id, int):
-                        self.logger.warning(f"targetID for UnitGroup '{target.target_id}' should likely be an integer.")
-                        # Attempt conversion, or raise error? For now, format as is.
-                        target_id_val = _format_value(target.target_id)
-                    elif target.target_type == "Unit":
-                        # Ensure Unit targetID is the integer unitInstanceID
-                        target_id_val = int(target.target_id) # Should already be int from action helper
-
-                    # Determine default altTargetIdx if not explicitly provided
-                    if target.alt_target_idx is not None:
-                        alt_idx_val = int(target.alt_target_idx)
-                    else:
-                        # Editor convention: Unit targets use -2, others use -1
-                        alt_idx_val = -2 if target.target_type == "Unit" else -1
-
-                    targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
-                                f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                                f"\t\t\t\t\ttargetID = {target_id_val}{eol}" \
-                                f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                                f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                                f"\t\t\t\t\taltTargetIdx = {alt_idx_val}{eol}" \
-                                f"{params_c}\t\t\t\t}}{eol}"
+                targets_c = "".join(self._format_event_target(target, eol) for target in event_info.event_targets)
 
                 # Format TimedEventInfo block
                 events_c += f"\t\t\tTimedEventInfo{eol}\t\t\t{{{eol}" \
@@ -2472,7 +2225,7 @@ class Mission:
             teg_c += f"\t\tFOLDER_DATA{eol}\t\t{{{eol}\t\t}}{eol}"
         
         # --- OBJECTIVES --- (Handles potential object links)
-        objectives_list = []
+        objectives_list, opfor_list = [], []  # OPFOR objectives go only to OBJECTIVES_OPFOR (ScenarioObjectives)
         for o in self.objectives: # o is Objective object
             # Resolve potential object links before formatting
             waypoint_id = o.waypoint
@@ -2498,57 +2251,7 @@ class Mission:
             fields_block = _format_block('fields', fields_content, 3)
 
             def format_objective_event(event_block_name: str, event_info_name: str, targets: List[EventTarget]) -> str:
-                targets_c = ""
-                for target in targets:
-                    params_c = ""
-                    for p in target.params:
-                        # Resolve param value links if needed
-                        param_value = p.value
-                        if isinstance(p.value, Waypoint):
-                             param_value = self._get_or_assign_id(p.value, "_pytol_wpt") # Ensure added, get ID
-                        elif isinstance(p.value, Path):
-                             param_value = self._get_or_assign_id(p.value, "_pytol_path") # Ensure added, get ID
-                        # Format ParamInfo block (add ParamAttrInfo if present)
-                        # Convert list values to semicolon format (e.g., [2] -> "2;")
-                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
-                        # ParamInfo should be indented to align with EventTarget properties (5 tabs)
-                        param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
-                                        f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                        f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
-                                        f"\t\t\t\t\t\tname = {p.name}{eol}"
-                        if p.attr_info:
-                             attr_type = p.attr_info.get('type')
-                             attr_data = p.attr_info.get('data')
-                             if attr_type and attr_data:
-                                  param_info_block += f"\t\t\t\t\t\t\tParamAttrInfo{eol}\t\t\t\t\t\t\t{{{eol}" \
-                                                      f"\t\t\t\t\t\t\t\ttype = {attr_type}{eol}" \
-                                                      f"\t\t\t\t\t\t\t\tdata = {attr_data}{eol}" \
-                                                      f"\t\t\t\t\t\t\t}}{eol}"
-                        param_info_block += f"\t\t\t\t\t}}{eol}"
-                        params_c += param_info_block
-
-                    # Resolve target ID links
-                    target_id_val = target.target_id
-                    if target.target_type == "Unit":
-                        # Ensure target_id is the integer unitInstanceID
-                        if not isinstance(target.target_id, int):
-                            self.logger.warning(f"EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
-                            try:
-                                target_id_val = int(target.target_id)
-                            except ValueError:
-                                self.logger.error(f"  > Could not convert Unit target ID to int for objective {o.objective_id}")
-                    elif target.target_type == "Waypoint" and isinstance(target.target_id, Waypoint):
-                        target_id_val = self._get_or_assign_id(target.target_id, "_pytol_wpt")
-                    elif target.target_type == "Path" and isinstance(target.target_id, Path):
-                        target_id_val = self._get_or_assign_id(target.target_id, "_pytol_path")
-                    # TODO: Add checks for Timed_Events, UnitGroup, System etc. if needed
-
-                    targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
-                                f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                                f"\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
-                                f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                                f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                                f"{params_c}\t\t\t\t}}{eol}"
+                targets_c = "".join(self._format_event_target(target, eol) for target in targets)
 
                 # Only create EventInfo content if there are targets
                 if targets_c:
@@ -2599,7 +2302,11 @@ class Mission:
             
             # Add any other custom fields
             for k, v in o.fields.items():
-                if k not in ['successConditional', 'success_conditional', 'failConditional', 'fail_conditional']:
+                if k not in ['successConditional', 'success_conditional', 'failConditional', 'fail_conditional', 'team']:
+                    if isinstance(v, (list, tuple)):
+                        v = "".join(f"{_format_value(self._resolve_link_id(x))};" for x in v)
+                    elif k in ('current_value', 'target_value', 'currentValue', 'targetValue'):
+                        v = self._resolve_link_id(v)  # VTOMGlobalValue fields hold GlobalValue ids
                     fields_content += f"\t\t\t\t{_snake_to_camel(k)} = {_format_value(v)}{eol}"
             fields_block = _format_block('fields', fields_content, 3)
 
@@ -2622,13 +2329,16 @@ class Mission:
                     f"\t\t\tautoSetWaypoint = {o.auto_set_waypoint}{eol}" \
                     f"\t\t\tstartMode = {start_mode_str}{eol}" \
                     f"\t\t\tobjectiveType = {o.type}{eol}" \
+                    f"\t\t\tpreReqObjectives = {''.join(f'{i};' for i in prereq_ids)}{eol}" \
                     f"{start_event_block}" \
                     f"{fail_event_block}" \
                     f"{complete_event_block}" \
                     f"{fields_block}" \
                     f"\t\t}}{eol}"
-            objectives_list.append(obj_str)
+            team = getattr(o, 'team', None) or o.fields.get('team')
+            (opfor_list if isinstance(team, str) and team.lower() in ("enemy", "opfor") else objectives_list).append(obj_str)
         objs_c = "".join(objectives_list)
+        opfor_c = "".join(opfor_list)
 
         # --- STATIC OBJECTS --- (Uses index as ID)
         # Note: VTOL VR expects section name "StaticObjects" and entry name "StaticObject"
@@ -2699,210 +2409,29 @@ class Mission:
         # --- CONDITIONAL ACTIONS ---
         ca_c = ""
         for ca in self.conditional_actions: # ca is ConditionalAction
-            targets_c = ""
-            # Reuse the EventTarget formatting logic
-            for target in ca.actions:
-                params_c = ""
-                for p in target.params:
-                    # --- Resolve param value links ---
-                    param_value = p.value
-                    if isinstance(p.value, GlobalValue):
-                         param_value = p.value.name
-                    elif isinstance(p.value, Waypoint):
-                         param_value = self._get_or_assign_id(p.value, "_pytol_wpt") # Ensure added, get ID
-                    elif isinstance(p.value, Path):
-                         param_value = self._get_or_assign_id(p.value, "_pytol_path") # Ensure added, get ID
-                    elif isinstance(p.value, Unit):
-                         # Find the unitInstanceID for the unit object
-                         found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is p.value), None)
-                         if found_id is not None:
-                              param_value = found_id
-                         else:
-                              self.logger.warning(f"Could not find unitInstanceID for Unit param value in CondAction {ca.id}")
-                    # TODO: Add checks for Conditional, etc. if actions can use them as param values
+            targets_c = "".join(self._format_event_target(target, eol) for target in ca.actions)
 
-                    # --- Format ParamInfo block (with ParamAttrInfo) ---
-                    # Convert list values to semicolon format (e.g., [2] -> "2;")
-                    formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
-                    param_info_block = f"\t\t\t\t\tParamInfo{eol}\t\t\t\t\t{{{eol}" \
-                                       f"\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                       f"\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
-                                       f"\t\t\t\t\t\tname = {p.name}{eol}"
-                    if p.attr_info:
-                         attr_type = p.attr_info.get('type')
-                         attr_data = p.attr_info.get('data')
-                         if attr_type and attr_data:
-                              param_info_block += f"\t\t\t\t\t\t\tParamAttrInfo{eol}\t\t\t\t\t\t\t{{{eol}" \
-                                                  f"\t\t\t\t\t\t\t\ttype = {attr_type}{eol}" \
-                                                  f"\t\t\t\t\t\t\t\tdata = {attr_data}{eol}" \
-                                                  f"\t\t\t\t\t\t\t}}{eol}"
-                    param_info_block += f"\t\t\t\t\t}}{eol}"
-                    params_c += param_info_block
-                    # --- End ParamInfo Formatting ---
+            cond = ca.conditional_id
+            if not isinstance(cond, Conditional) and not hasattr(cond, 'components'):
+                cond = next((self.conditionals[k] for k in (cond, str(cond)) if k in self.conditionals), None)
+                if cond is None and str(cond).lstrip('-').isdigit():
+                    cond = self.conditionals.get(int(ca.conditional_id))
+            if cond is None:
+                self.logger.warning(f"ConditionalAction {ca.id} has no valid conditional; it will never fire.")
+                cond_block = ""
+            else:
+                cond_block = self._format_conditional("0", cond)
+            actions_block = _format_block("ACTIONS", f"\t\t\t\teventName = {eol}{targets_c}", 3)
+            base_block = _format_block("BASE_BLOCK", f"\t\t\t\tblockName = {ca.name}{eol}\t\t\t\tblockId = {ca.id}{eol}"
+                                                     f"{cond_block}{actions_block}", 3)
+            ca_c += f"\t\tConditionalAction{eol}\t\t{{{eol}\t\t\tid = {ca.id}{eol}\t\t\tname = {ca.name}{eol}{base_block}\t\t}}{eol}"
 
-                # --- Resolve target ID links ---
-                target_id_val = target.target_id
-                if target.target_type == "GlobalValue":
-                    if isinstance(target.target_id, GlobalValue):
-                        target_id_val = target.target_id.name
-                    elif not isinstance(target.target_id, str):
-                        self.logger.warning(f"targetID for GlobalValue should be string name, got {target.target_id}")
-                        target_id_val = str(target.target_id)
-                elif target.target_type == "Unit":
-                    if isinstance(target.target_id, Unit): # If Unit object passed
-                         found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is target.target_id), None)
-                         if found_id is not None:
-                              target_id_val = found_id
-                         else:
-                              self.logger.warning(f"Could not find unitInstanceID for Unit target ID in CondAction {ca.id}")
-                    elif not isinstance(target.target_id, int): # Ensure it's an int if not an object
-                         self.logger.warning(f"EventTarget for Unit should use integer unitInstanceID, got {target.target_id}. Attempting conversion.")
-                         try:
-                             target_id_val = int(target.target_id)
-                         except ValueError:
-                             self.logger.error(f"  > Could not convert Unit target ID to int for CondAction {ca.id}")
-                elif target.target_type == "Waypoint":
-                    if isinstance(target.target_id, Waypoint):
-                        target_id_val = self._get_or_assign_id(target.target_id, "_pytol_wpt")
-                    # Ensure it's an int if already provided
-                    elif not isinstance(target_id_val, int):
-                         try:
-                             target_id_val = int(target_id_val)
-                         except ValueError:
-                             self.logger.warning(f"Waypoint target ID should be int, got {target_id_val}")
-                elif target.target_type == "Path":
-                     if isinstance(target.target_id, Path):
-                          target_id_val = self._get_or_assign_id(target.target_id, "_pytol_path")
-                     elif not isinstance(target_id_val, int):
-                         try:
-                             target_id_val = int(target_id_val)
-                         except ValueError:
-                             self.logger.warning(f"Path target ID should be int, got {target_id_val}")
-                elif target.target_type == "Conditional":
-                     if isinstance(target.target_id, Conditional):
-                          target_id_val = self._get_or_assign_id(target.target_id, "_pytol_cond") # Ensure added, get ID
-                     elif not isinstance(target_id_val, int):
-                         # Conditionals now use integer IDs
-                         try:
-                             target_id_val = int(target_id_val)
-                         except (ValueError, TypeError):
-                             self.logger.warning(f"Conditional target ID should be integer, got {target_id_val}")
-                             target_id_val = int(target_id_val) if target_id_val else 0
-                # TODO: Add resolutions for Timed_Events, UnitGroup, System etc. if needed
-                # --- End Target ID Resolution ---
-
-
-                # --- Format EventTarget ---
-                targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
-                            f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                            f"\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
-                            f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                            f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                            f"{params_c}\t\t\t\t}}{eol}"
-                # --- End EventTarget Formatting ---
-
-            # Format the EventInfo block containing the actions
-            event_info_content = f"\t\t\t\teventName = Action{eol}{targets_c}" # Standard name is 'Action'
-            event_info_block = _format_block("EventInfo", event_info_content, 3)
-
-            # Format the ConditionalAction block
-            # Resolve conditional link if object was passed
-            cond_id_val = ca.conditional_id
-            if isinstance(ca.conditional_id, Conditional):
-                cond_id_val = self._get_or_assign_id(ca.conditional_id, "_pytol_cond") # Ensure added, get ID
-            # Ensure conditional_id is an integer (conditionals now use int IDs)
-            if isinstance(cond_id_val, str):
-                # Legacy string ID - try to convert
-                if cond_id_val.startswith("_pytol_cond_"):
-                    try:
-                        cond_id_val = int(cond_id_val.replace("_pytol_cond_", ""))
-                    except ValueError:
-                        self.logger.warning(f"Could not convert conditional ID '{cond_id_val}' to integer")
-                else:
-                    try:
-                        cond_id_val = int(cond_id_val)
-                    except ValueError:
-                        self.logger.warning(f"Could not convert conditional ID '{cond_id_val}' to integer")
-            cond_id_val = int(cond_id_val) if not isinstance(cond_id_val, int) else cond_id_val
-
-            ca_c += f"\t\tConditionalAction{eol}\t\t{{{eol}" \
-                    f"\t\t\tid = {ca.id}{eol}" \
-                    f"\t\t\tname = {ca.name}{eol}" \
-                    f"\t\t\tconditionalID = {cond_id_val}{eol}" \
-                    f"{event_info_block}\t\t}}{eol}"
-            
         # --- RANDOM EVENTS ---
         re_c = ""
         for rnd in self.random_events: # rnd is RandomEvent (the container)
             actions_c = "" # String for all ACTION blocks within this RANDOM_EVENT
             for action in rnd.action_options: # action is RandomEventAction
-                targets_c = ""
-                # Format EventTargets within this action
-                for target in action.actions:
-                    params_c = ""
-                    for p in target.params:
-                        # Resolve param value links
-                        param_value = p.value
-                        if isinstance(p.value, GlobalValue):
-                            param_value = p.value.name
-                        elif isinstance(p.value, Waypoint):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_wpt")
-                        elif isinstance(p.value, Path):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_path")
-                        elif isinstance(p.value, Unit):
-                            found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is p.value), None)
-                            if found_id is not None:
-                                param_value = found_id
-                            else:
-                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in RandomEvent {rnd.id}, Action {action.id}")
-                        # Format ParamInfo (with ParamAttrInfo)
-                        # Convert list values to semicolon format (e.g., [2] -> "2;")
-                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
-                        param_info_block = f"\t\t\t\t\t\tParamInfo{eol}\t\t\t\t\t\t{{{eol}" \
-                                           f"\t\t\t\t\t\t\ttype = {p.type}{eol}" \
-                                           f"\t\t\t\t\t\t\tvalue = {formatted_value}{eol}" \
-                                           f"\t\t\t\t\t\t\tname = {p.name}{eol}"
-                        if p.attr_info:
-                            attr_type = p.attr_info.get('type')
-                            attr_data = p.attr_info.get('data')
-                            if attr_type and attr_data:
-                                param_info_block += f"\t\t\t\t\t\t\t\tParamAttrInfo{eol}\t\t\t\t\t\t\t\t{{{eol}" \
-                                                    f"\t\t\t\t\t\t\t\t\ttype = {attr_type}{eol}" \
-                                                    f"\t\t\t\t\t\t\t\t\tdata = {attr_data}{eol}" \
-                                                    f"\t\t\t\t\t\t\t\t}}{eol}"
-                        param_info_block += f"\t\t\t\t\t\t}}{eol}"
-                        params_c += param_info_block
-
-                    # Resolve target ID links
-                    target_id_val = target.target_id
-                    # ... (Copy full target ID resolution logic from ConditionalActions/TimedEvents) ...
-                    if target.target_type == "GlobalValue":
-                         if isinstance(target.target_id, GlobalValue):
-                             target_id_val = target.target_id.name
-                         elif not isinstance(target.target_id, str):
-                             target_id_val = str(target.target_id)
-                    elif target.target_type == "Unit":
-                         if isinstance(target.target_id, Unit):
-                              found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is target.target_id), None)
-                              if found_id is not None:
-                                  target_id_val = found_id
-                              else:
-                                  self.logger.warning(f"Could not find unitInstanceID for Unit target ID in RandomEvent {rnd.id}, Action {action.id}")
-                         elif not isinstance(target.target_id, int):
-                              try:
-                                  target_id_val = int(target.target_id)
-                              except ValueError:
-                                  self.logger.warning(f"Unit target ID not int for RandomEvent {rnd.id}, Action {action.id}")
-                    # ... etc. for Waypoint, Path, Conditional ...
-
-                    # Format EventTarget
-                    targets_c += f"\t\t\t\tEventTarget{eol}\t\t\t\t{{{eol}" \
-                                f"\t\t\t\t\ttargetType = {target.target_type}{eol}" \
-                                f"\t\t\t\t\ttargetID = {_format_value(target_id_val)}{eol}" \
-                                f"\t\t\t\t\teventName = {target.event_name}{eol}" \
-                                f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}{eol}" \
-                                f"\t\t\t\t\taltTargetIdx = -1{eol}" \
-                                f"{params_c}\t\t\t\t\t}}{eol}"
+                targets_c = "".join(self._format_event_target(target, eol) for target in action.actions)
 
                 # Format the EVENT_INFO block for this ACTION
                 event_info_content = f"\t\t\t\t\teventName = {eol}{targets_c}"
@@ -2942,7 +2471,7 @@ class Mission:
                     f"\t\t\t\tid = {action.id}{eol}"
                     f"\t\t\t\tactionName = {action.action_name}{eol}"
                     f"\t\t\t\tfixedWeight = {_format_value(action.fixed_weight)}{eol}"
-                    f"\t\t\t\tgvWeight = {action.gv_weight_name or -1}{eol}" # Use -1 if no GV specified
+                    f"\t\t\t\tgvWeight = {self._resolve_link_id(action.gv_weight_name) if action.gv_weight_name else -1}{eol}" # Use -1 if no GV specified
                     f"\t\t\t\tuseGv = {action.use_gv_weight}{eol}"
                     f"{conditional_block_inner}" # Include the nested conditional block
                     f"{event_info_block}"        # Include the nested event info block
@@ -2962,105 +2491,14 @@ class Mission:
             events_c = ""
             for ev in seq.events:
                 # Build EventTargets for this EVENT's EventInfo
-                targets_c = ""
-                for target in ev.actions:
-                    params_c = ""
-                    for p in target.params:
-                        # Resolve param value links
-                        param_value = p.value
-                        if isinstance(p.value, GlobalValue):
-                            param_value = p.value.name
-                        elif isinstance(p.value, Waypoint):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_wpt")
-                        elif isinstance(p.value, Path):
-                            param_value = self._get_or_assign_id(p.value, "_pytol_path")
-                        elif isinstance(p.value, Unit):
-                            found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is p.value), None)
-                            if found_id is not None:
-                                param_value = found_id
-                            else:
-                                self.logger.warning(f"Could not find unitInstanceID for Unit param value in EventSequence {seq.id}")
-
-                        # Convert list values to semicolon format else normal format
-                        formatted_value = _format_id_list(param_value) + ";" if isinstance(param_value, list) else _format_value(param_value)
-
-                        param_info_block = (
-                            f"\t\t\t\t\tParamInfo\n\t\t\t\t\t{{\n"
-                            f"\t\t\t\t\t\ttype = {p.type}\n"
-                            f"\t\t\t\t\t\tvalue = {formatted_value}\n"
-                            f"\t\t\t\t\t\tname = {p.name}\n"
-                        )
-                        if p.attr_info:
-                            attr_type = p.attr_info.get('type')
-                            attr_data = p.attr_info.get('data')
-                            if attr_type and attr_data:
-                                param_info_block += (
-                                    f"\t\t\t\t\t\t\tParamAttrInfo\n\t\t\t\t\t\t\t{{\n"
-                                    f"\t\t\t\t\t\t\t\ttype = {attr_type}\n"
-                                    f"\t\t\t\t\t\t\t\tdata = {attr_data}\n"
-                                    f"\t\t\t\t\t\t\t}}\n"
-                                )
-                        param_info_block += "\t\t\t\t\t}\n"
-                        params_c += param_info_block
-
-                    # Resolve target ID links
-                    target_id_val = target.target_id
-                    if target.target_type == "GlobalValue":
-                        if isinstance(target.target_id, GlobalValue):
-                            target_id_val = target.target_id.name
-                        elif not isinstance(target.target_id, str):
-                            target_id_val = str(target.target_id)
-                    elif target.target_type == "Unit":
-                        if isinstance(target.target_id, Unit):
-                            found_id = next((u['unitInstanceID'] for u in self.units if u['unit_obj'] is target.target_id), None)
-                            if found_id is not None:
-                                target_id_val = found_id
-                            else:
-                                self.logger.warning(f"Could not find unitInstanceID for Unit target ID in EventSequence {seq.id}")
-                        elif not isinstance(target.target_id, int):
-                            try:
-                                target_id_val = int(target.target_id)
-                            except ValueError:
-                                self.logger.warning(f"Unit target ID not int for EventSequence {seq.id}")
-                    elif target.target_type == "Waypoint":
-                        if isinstance(target.target_id, Waypoint):
-                            target_id_val = self._get_or_assign_id(target.target_id, "_pytol_wpt")
-                        elif not isinstance(target.target_id, int):
-                            try:
-                                target_id_val = int(target.target_id)
-                            except ValueError:
-                                self.logger.warning(f"Waypoint target ID should be int, got {target.target_id}")
-                    elif target.target_type == "Path":
-                        if isinstance(target.target_id, Path):
-                            target_id_val = self._get_or_assign_id(target.target_id, "_pytol_path")
-                        elif not isinstance(target.target_id, int):
-                            try:
-                                target_id_val = int(target.target_id)
-                            except ValueError:
-                                self.logger.warning(f"Path target ID should be int, got {target.target_id}")
-                    elif target.target_type == "Conditional":
-                        if isinstance(target.target_id, Conditional):
-                            target_id_val = self._get_or_assign_id(target.target_id, "_pytol_cond")
-                        elif not isinstance(target.target_id, str):
-                            self.logger.warning(f"Conditional target ID should be string, got {target.target_id}")
-                            target_id_val = str(target.target_id)
-
-                    # Format EventTarget
-                    targets_c += (
-                        f"\t\t\t\tEventTarget\n\t\t\t\t{{\n"
-                        f"\t\t\t\t\ttargetType = {target.target_type}\n"
-                        f"\t\t\t\t\ttargetID = {_format_value(target_id_val)}\n"
-                        f"\t\t\t\t\teventName = {target.event_name}\n"
-                        f"\t\t\t\t\tmethodName = {target.method_name or target.event_name}\n"
-                        f"{params_c}\t\t\t\t}}\n"
-                    )
+                targets_c = "".join(self._format_event_target(target) for target in ev.actions)
 
                 # Build EventInfo block for this EVENT
                 event_info_content = f"\t\t\t\teventName = \n{targets_c}"
                 event_info_block = _format_block("EventInfo", event_info_content, 4)
 
-                # Resolve this EVENT's conditional link (id or 0)
-                event_cond_id_val_str = "0"
+                # Resolve this EVENT's conditional link (no key = no condition)
+                event_cond_id_val_str = None
                 if ev.conditional is not None:
                     if isinstance(ev.conditional, Conditional):
                         event_cond_id_val_str = self._get_or_assign_id(ev.conditional, "_pytol_cond")
@@ -3079,9 +2517,8 @@ class Mission:
                     f"\t\t\tEVENT\n\t\t\t{{\n"
                     f"\t\t\t\tnodeName = {ev.node_name}\n"
                     f"\t\t\t\tdelay = {_format_value(ev.delay)}\n"
-                    f"\t\t\t\tconditional = {event_cond_id_val_str}\n"
-                    f"{event_info_block}"
-                    f"\t\t\t}}\n"
+                    + (f"\t\t\t\tconditional = {event_cond_id_val_str}\n" if event_cond_id_val_str is not None else "")
+                    + f"{event_info_block}\t\t\t}}\n"
                 )
                 events_c += event_block
 
@@ -3092,6 +2529,7 @@ class Mission:
                     try:
                         # Generate self-contained conditional graph, reindent to 3 tabs for SEQUENCE nesting
                         nested = self._format_conditional("0", seq.while_conditional)
+                        nested = nested.replace("CONDITIONAL", "whileConditional", 1)
                         nested_lines = nested.splitlines(True)
                         adjusted = []
                         for ln in nested_lines:
@@ -3143,6 +2581,7 @@ class Mission:
             "UNITGROUPS": ug_c,             
             "TRIGGER_EVENTS": triggers_c,
             "OBJECTIVES": objs_c,
+            "OBJECTIVES_OPFOR": opfor_c,
             "StaticObjects": statics_c,
             "BASES": bases_c,                
             "Conditionals": conditionals_c,  
@@ -3156,8 +2595,24 @@ class Mission:
         }
         
 
+    def _unit_or_wpt_ref(self, ref: Any) -> str:
+        """Waypoint/unit reference as VTScenario.GetUnitOrWaypointID writes it ("wpt:<id>", "unit:<id>" or empty)."""
+        if ref is None or ref == "":
+            return ""
+        if isinstance(ref, str):
+            if ref.startswith(("wpt:", "unit:")):
+                return ref
+            ref = int(ref)
+        if isinstance(ref, Unit):
+            return f"unit:{self._resolve_link_id(ref)}"
+        if isinstance(ref, Waypoint):
+            return f"wpt:{self._resolve_link_id(ref)}"
+        return f"wpt:{int(ref)}"
+
     def _save_to_file(self, path: str):
         """Internal method to generate and write the VTS file content."""
+        if not self.allowed_equips:
+            self.set_allowed_equips_for_vehicle()
         c = self._generate_content_string()
         eol = "\n"
         vts = f"CustomScenario{eol}{{{eol}"
@@ -3180,8 +2635,8 @@ class Mission:
             f"\tequipsConfigurable = {self.equips_configurable}",
             f"\tbaseBudget = {self.base_budget}",
             f"\tisTraining = {self.is_training}",
-            f"\trtbWptID = {self.rtb_wpt_id}",
-            f"\trefuelWptID = {self.refuel_wpt_id}",
+            f"\trtbWptID = {self._unit_or_wpt_ref(self.rtb_wpt_id)}",
+            f"\trefuelWptID = {self._unit_or_wpt_ref(self.refuel_wpt_id)}",
         ]
         
         # Add multiplayer-specific properties if multiplayer is enabled
@@ -3196,8 +2651,8 @@ class Mission:
                 f"\tscorePerKill_A = {self.score_per_kill_a}",
                 f"\tscorePerKill_B = {self.score_per_kill_b}",
                 f"\tmpBudgetMode = {self.mp_budget_mode}",
-                f"\trtbWptID_B = {self.rtb_wpt_id_b}",
-                f"\trefuelWptID_B = {self.refuel_wpt_id_b}",
+                f"\trtbWptID_B = {self._unit_or_wpt_ref(self.rtb_wpt_id_b)}",
+                f"\trefuelWptID_B = {self._unit_or_wpt_ref(self.refuel_wpt_id_b)}",
                 f"\tseparateBriefings = {self.separate_briefings}",
                 f"\tbaseBudgetB = {self.base_budget_b}",
             ])
@@ -3247,34 +2702,7 @@ class Mission:
         vts += _format_block("TimedEventGroups", c["TimedEventGroups"]) 
         vts += _format_block("TRIGGER_EVENTS", c["TRIGGER_EVENTS"])
         vts += _format_block("OBJECTIVES", c["OBJECTIVES"])
-        # --- OBJECTIVES_OPFOR ---
-        # Build OBJECTIVES_OPFOR by extracting Objective sub-blocks from the
-        # previously generated OBJECTIVES content and including only those
-        # objectives that were marked with a team hint (e.g., 'Enemy' or 'OPFOR').
-        objs_raw = c.get("OBJECTIVES", "") or ""
-        opfor_c = ""
-        if objs_raw.strip():
-            # Match each Objective block (uses two tabs at start for section entries)
-            obj_blocks = re.findall(r"(\t\tObjective\s*\{\n(?:.*?\n)*?\t\t\})", objs_raw, flags=re.DOTALL)
-            selected = []
-            for blk in obj_blocks:
-                m = re.search(r"objectiveID\s*=\s*(\d+)", blk)
-                if not m:
-                    continue
-                oid = int(m.group(1))
-                obj = self._objectives_map.get(oid)
-                team = None
-                if obj is not None:
-                    # Prefer fields['team'] hint, fall back to attribute
-                    if isinstance(getattr(obj, 'fields', None), dict):
-                        team = obj.fields.get('team')
-                    if team is None:
-                        team = getattr(obj, 'team', None)
-                if isinstance(team, str) and team.lower() in ("enemy", "opfor"):
-                    selected.append(blk)
-            opfor_c = "".join(selected)
-
-        vts += _format_block("OBJECTIVES_OPFOR", opfor_c)
+        vts += _format_block("OBJECTIVES_OPFOR", c["OBJECTIVES_OPFOR"])
         vts += _format_block("StaticObjects", c["StaticObjects"])
         vts += _format_block("Conditionals", c["Conditionals"])       
         vts += _format_block("ConditionalActions", c["ConditionalActions"]) 

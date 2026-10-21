@@ -224,9 +224,6 @@ class MapPillowVisualizer:
             'waypoints': (255, 102, 0),          # #FF6600 - Orange
             'objectives': (153, 0, 204),         # #9900CC - Purple
             'airbases': (255, 215, 0),           # #FFD700 - Gold
-            'friendly_territory': (0, 68, 170),  # #0044AA - Blue
-            'enemy_territory': (170, 0, 0),      # #AA0000 - Red
-            'neutral_territory': (128, 128, 128), # #808080 - Gray
         }
 
     def save_terrain_overview(self, filename: Optional[str] = None, save: bool = False, style: str = 'heatmap') -> Image:
@@ -427,93 +424,13 @@ class MapPillowVisualizer:
                 if name and self._font:
                     draw.text((px + r + 4, pz - r), str(name), fill=(0, 0, 0), font=self._font)
 
-        def _draw_territories():
-            """Draw territory zones (friendly/enemy/neutral) matching matplotlib."""
-            if not self.has_mission_data:
-                return
-            # Get world state from mission
-            world_state = None
-            if hasattr(self.mission, 'world_state'):
-                world_state = self.mission.world_state
-            elif hasattr(self.mission, 'wsm'):
-                world_state = self.mission.wsm
-            else:
-                return
-            
-            if not hasattr(world_state, 'territory_zones'):
-                return
-            
-            self.logger.info("Drawing territory zones...")
-            
-            territory_colors = {
-                'friendly': self.colors['friendly_territory'],
-                'enemy': self.colors['enemy_territory'],
-                'neutral': self.colors['neutral_territory']
-            }
-            
-            from pytol.misc.math_utils import is_position_in_circle
-            
-            # Draw territories in order: friendly, enemy, neutral
-            for territory_type in ['friendly', 'enemy', 'neutral']:
-                zones = world_state.territory_zones.get(territory_type, [])
-                if not zones:
-                    continue
-                
-                color = territory_colors.get(territory_type, (128, 128, 128))
-                
-                for zone in zones:
-                    try:
-                        if zone.get('type') == 'circle':
-                            center = zone['center']
-                            radius = zone['radius']
-                            cx, cz = center[0], center[2] if len(center) > 2 else center[1]
-                            px, pz = world_to_px(cx, cz)
-                            radius_px = int(radius * (w / map_size))
-                            
-                            # Draw filled circle with transparency (draw a semi-transparent overlay)
-                            # Create a temporary image for alpha blending
-                            overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-                            overlay_draw = ImageDraw.Draw(overlay)
-                            overlay_draw.ellipse((px - radius_px, pz - radius_px, px + radius_px, pz + radius_px),
-                                                fill=(color[0], color[1], color[2], 51),  # ~20% alpha
-                                                outline=(color[0], color[1], color[2], 200), width=2)
-                            base = Image.alpha_composite(base.convert('RGBA'), overlay).convert('RGB')
-                            draw = ImageDraw.Draw(base)
-                            
-                        elif zone.get('type') == 'polygon':
-                            vertices = zone.get('vertices', [])
-                            if len(vertices) >= 3:
-                                # Convert vertices to pixel coordinates
-                                pts = []
-                                for v in vertices:
-                                    vx, vz = v[0], v[2] if len(v) > 2 else v[1]
-                                    pts.append(world_to_px(vx, vz))
-                                if len(pts) >= 3:
-                                    # Close polygon
-                                    if pts[0] != pts[-1]:
-                                        pts.append(pts[0])
-                                    # Draw with transparency using overlay
-                                    overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-                                    overlay_draw = ImageDraw.Draw(overlay)
-                                    overlay_draw.polygon(pts,
-                                                        fill=(color[0], color[1], color[2], 51),
-                                                        outline=(color[0], color[1], color[2], 200))
-                                    base = Image.alpha_composite(base.convert('RGBA'), overlay).convert('RGB')
-                                    draw = ImageDraw.Draw(base)
-                    except Exception:
-                        continue
 
         # Draw helper layers in correct order (terrain background already done)
         try:
             _draw_roads()
-            _draw_territories()
             _draw_cities()
         except Exception:
             pass
-
-        # CRITICAL: Recreate draw object after territories may have modified the base image
-        # Territories use alpha_composite which creates a new image, so the draw object becomes stale
-        draw = ImageDraw.Draw(base)
 
         def _draw_objectives():
             """Draw objectives matching matplotlib style."""
@@ -682,118 +599,6 @@ class MapPillowVisualizer:
                 except Exception as e:
                     self.logger.warning(f"Error drawing objective {i+1}: {e}")
                     continue
-
-        def _draw_key_points():
-            """Draw mission key points matching matplotlib style."""
-            nonlocal base, draw
-            if not self.has_mission_data:
-                return
-            # Get world state
-            world_state = None
-            if hasattr(self.mission, 'world_state'):
-                world_state = self.mission.world_state
-            elif hasattr(self.mission, 'wsm'):
-                world_state = self.mission.wsm
-            else:
-                return
-            
-            # Try to get mission key points from assets
-            key_points = None
-            try:
-                if hasattr(world_state, 'assets'):
-                    key_points_asset = world_state.assets.get('mission_key_points')
-                    if key_points_asset and isinstance(key_points_asset, dict):
-                        key_points = key_points_asset.get('points')
-            except Exception:
-                pass
-            
-            if not key_points:
-                return
-            
-            self.logger.info(f"Drawing {len(key_points)} mission key points...")
-            
-            point_styles = {
-                'objective': {'marker_size': 150, 'color': (153, 0, 204)},  # Purple
-                'threat': {'marker_size': 120, 'color': (255, 0, 0)},       # Red
-                'defense': {'marker_size': 100, 'color': (0, 102, 204)},    # Blue
-                'staging': {'marker_size': 100, 'color': (0, 170, 0)},      # Green
-            }
-            
-            for point_id, point_info in key_points.items():
-                try:
-                    pos = point_info.get('position')
-                    if not pos or len(pos) < 3:
-                        continue
-                    
-                    point_type = point_info.get('type', 'objective')
-                    radius = point_info.get('radius', 5000)
-                    priority = point_info.get('priority', 5)
-                    mission_role = point_info.get('mission_role', '')
-                    
-                    style = point_styles.get(point_type, point_styles['objective'])
-                    px, pz = world_to_px(pos[0], pos[2])
-                    
-                    # Draw influence radius circle (semi-transparent)
-                    radius_px = int(radius * (w / map_size))
-                    overlay = Image.new('RGBA', (w, h), (0, 0, 0, 0))
-                    overlay_draw = ImageDraw.Draw(overlay)
-                    overlay_draw.ellipse((px - radius_px, pz - radius_px, px + radius_px, pz + radius_px),
-                                        fill=(style['color'][0], style['color'][1], style['color'][2], 25),
-                                        outline=(style['color'][0], style['color'][1], style['color'][2], 128))
-                    base = Image.alpha_composite(base.convert('RGBA'), overlay).convert('RGB')
-                    draw = ImageDraw.Draw(base)
-                    
-                    # Draw key point marker
-                    marker_size = max(10, int((w / 1024.0) * (style['marker_size'] / 10)))
-                    if point_type == 'objective':
-                        # Star
-                        star_points = []
-                        for j in range(10):
-                            angle = j * math.pi / 5.0 - math.pi / 2.0
-                            rad = marker_size if (j % 2 == 0) else marker_size * 0.4
-                            star_points.append((px + int(math.cos(angle) * rad),
-                                              pz + int(math.sin(angle) * rad)))
-                        draw.polygon(star_points, fill=style['color'], outline=(0, 0, 0))
-                    elif point_type == 'threat':
-                        # X marker
-                        x_size = marker_size
-                        draw.line((px - x_size, pz - x_size, px + x_size, pz + x_size),
-                                 fill=style['color'], width=2)
-                        draw.line((px - x_size, pz + x_size, px + x_size, pz - x_size),
-                                 fill=style['color'], width=2)
-                    else:
-                        # Square or triangle
-                        if point_type == 'defense':
-                            # Square
-                            draw.rectangle((px - marker_size, pz - marker_size, px + marker_size, pz + marker_size),
-                                         fill=style['color'], outline=(0, 0, 0))
-                        else:
-                            # Triangle
-                            draw.polygon([(px, pz - marker_size), (px + marker_size, pz + marker_size),
-                                        (px - marker_size, pz + marker_size)],
-                                       fill=style['color'], outline=(0, 0, 0))
-                    
-                    # Label with priority/role
-                    label_text = f"{mission_role}\nP{priority}" if mission_role else f"P{priority}"
-                    if self._font:
-                        try:
-                            bbox = draw.textbbox((px + marker_size + 4, pz - marker_size), label_text, font=self._font)
-                            draw.rectangle(bbox, fill=(255, 255, 255), outline=style['color'])
-                            draw.text((px + marker_size + 4, pz - marker_size), label_text,
-                                    fill=(0, 0, 0), font=self._font)
-                        except AttributeError:
-                            # Fallback for older Pillow
-                            draw.text((px + marker_size + 4, pz - marker_size), label_text,
-                                    fill=(0, 0, 0), font=self._font)
-                except Exception:
-                    continue
-
-        # Draw key points FIRST (they modify base with alpha_composite)
-        # Note: This function uses nonlocal to update base and draw
-        _draw_key_points()
-        
-        # CRITICAL: Recreate draw object after key_points may have modified base
-        draw = ImageDraw.Draw(base)
 
         # Draw units and waypoints first
         
