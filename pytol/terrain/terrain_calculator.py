@@ -295,6 +295,47 @@ class TerrainCalculator:
     def get_city_layout_at(self, world_x, world_z):
         return self._city_layout_at_pixel(*self._world_to_pixel(world_x, world_z))
 
+    def _city_footprints(self, px, py):
+        """XZ boxes [min_x, max_x, min_z, max_z] of the buildings of the city block at a pixel (cached)."""
+        cache = self.__dict__.setdefault('_footprint_cache', {})
+        if (px, py) not in cache:
+            layout = self._city_layout_at_pixel(px, py)
+            boxes = []
+            if layout:
+                pivot = self._block_pivot(px, py)
+                rot = R.from_euler('Y', layout['block_yaw_degrees'], degrees=True).as_matrix()
+                for s in layout['surfaces']:
+                    b = s.get('bounds_rel_layout', [])
+                    if len(b) == 6:
+                        c = _box_corners(b) @ rot.T + pivot
+                        boxes.append((c[:, 0].min(), c[:, 0].max(), c[:, 2].min(), c[:, 2].max()))
+            cache[(px, py)] = np.array(boxes).reshape(-1, 4)
+        return cache[(px, py)]
+
+    def _static_footprints(self):
+        if not hasattr(self, '_static_boxes'):
+            self._static_boxes = np.array([[s['world_bounds'][i] for i in (0, 3, 2, 5)]
+                                           for s in self.static_surfaces]).reshape(-1, 4)
+        return self._static_boxes
+
+    def is_area_clear(self, world_x, world_z, radius):
+        """True when no city building or static prefab part lies within `radius` of the point (XZ), so a ground
+        unit or structure of that size fits there: open lots inside a town count as clear."""
+        def hits(boxes):
+            if not len(boxes):
+                return False
+            dx = np.maximum(np.maximum(boxes[:, 0] - world_x, world_x - boxes[:, 1]), 0.0)
+            dz = np.maximum(np.maximum(boxes[:, 2] - world_z, world_z - boxes[:, 3]), 0.0)
+            return bool(np.any(dx * dx + dz * dz < radius * radius))
+
+        px, py = self._world_to_pixel(world_x, world_z)
+        reach = int(np.ceil(radius / METERS_PER_PIXEL)) + 1  # a block's buildings can overhang its pixel
+        for qy in range(py - reach, py + reach + 1):
+            for qx in range(px - reach, px + reach + 1):
+                if self._city_pixel_g(qx, qy) > 0.1 and hits(self._city_footprints(qx, qy)):
+                    return False
+        return not hits(self._static_footprints())
+
     def _generate_all_city_blocks(self):
         g = self.heightmap_data_g
         quad = (g[:-1, :-1] > 0.1) & (g[:-1, 1:] > 0.1) & (g[1:, 1:] > 0.1) & (g[1:, :-1] > 0.1)

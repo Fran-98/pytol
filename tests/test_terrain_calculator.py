@@ -52,7 +52,28 @@ def test_heights_match_maps():
             assert np.median(serr) < 3.0, f"{path}: terrain height does not match static prefabs"
 
 
+def test_area_clear_sees_buildings():
+    """Points inside a city building are blocked; some lots in town and open country stay clear."""
+    maps = _maps()
+    if not maps:
+        import pytest
+        pytest.skip("VTOL_VR_DIR with CustomMaps not set")
+    for path in maps:
+        tc = TerrainCalculator(map_directory_path=path, verbose=False)
+        if not tc.city_blocks:
+            continue
+        free = 0
+        for block in tc.city_blocks[:40]:
+            boxes = tc._city_footprints(*block['pixel_coord'])
+            for x0, x1, z0, z1 in boxes:
+                assert not tc.is_area_clear((x0 + x1) / 2, (z0 + z1) / 2, 1.0)
+            x, _, z = block['world_position']
+            free += any(tc.is_area_clear(x + dx, z + dz, 15.0) for dx in range(-70, 71, 20) for dz in range(-70, 71, 20))
+        assert free > 0, f"{path}: no open lot found in any city block"
+
+
 if __name__ == '__main__':
     test_flat_ground_keeps_pure_yaw()
     test_heights_match_maps()
+    test_area_clear_sees_buildings()
     print("OK")
