@@ -205,7 +205,7 @@ class AIUnitSpawn(UnitSpawn):
     spawn_on_start: Optional[bool] = True
     invincible: Optional[bool] = False
     combat_target: Optional[bool] = None
-    respawnable: Optional[bool] = None
+    respawnable: Optional[bool] = False  # game default; null fails to parse
 
 @dataclass(unsafe_hash=True)
 class AIDecoyLauncherSpawn(AIUnitSpawn):

@@ -265,6 +265,9 @@ class Mission:
         self.multiplayer = False
         self.allowed_equips = ""  # filled from the vehicle in _save_to_file when left empty
         self.forced_equips = ";;;;;;;"  # Forced equipment slots (semicolon-separated)
+        # Add / Omit equipment added to the game after this file was made. When missing (Undefined) the
+        # editor forces its info window open on load.
+        self.add_new_equips = "Add"
         self.force_equips = False
         self.norm_forced_fuel = 1
         self.equips_configurable = True
@@ -2665,6 +2668,7 @@ class Mission:
             f"\tmultiplayer = {self.multiplayer}",
             f"\tallowedEquips = {self.allowed_equips}",
             f"\tforcedEquips = {self.forced_equips}",
+            f"\taddNewEquips = {self.add_new_equips}",
             f"\tforceEquips = {self.force_equips}",
             f"\tnormForcedFuel = {self.norm_forced_fuel}",
             f"\tequipsConfigurable = {self.equips_configurable}",
