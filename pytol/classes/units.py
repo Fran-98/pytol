@@ -368,6 +368,11 @@ class RocketArtilleryUnitSpawn(ArtilleryUnitSpawn):
     reload_time: Optional[float] = 1.0
 
 @dataclass(unsafe_hash=True)
+class J4MothershipSpawn(AIUnitSpawn):
+    'Dataclass for unit J4MothershipSpawn (the Mothership); no extra fields'
+    pass
+
+@dataclass(unsafe_hash=True)
 class PlayerSpawn(UnitSpawn):
     'Dataclass for unit PlayerSpawn'
     start_mode: Optional[Literal['Cold', 'FlightReady', 'FlightAP']] = None
@@ -451,6 +456,9 @@ ID_TO_CLASS = {
     'EMWSTruck': AIGroundMWSSpawn,
     'EnemyAPC': APCUnitSpawn,
     'EnemyCarrier': AICarrierSpawn,
+    'EnemyCarrier2': AICarrierSpawn,
+    'EnemyAAShip': AICarrierSpawn,
+    'Mothership': J4MothershipSpawn,
     'enemyMBT1': GroundUnitSpawn,
     'EnemyRearmRefuelPoint': RearmingUnitSpawn,
     'EnemyRearmRefuelPointB': RearmingUnitSpawn,

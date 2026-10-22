@@ -139,6 +139,9 @@ def _format_block(name: str, content_str: str, indent_level: int = 1) -> str:
         return f"{indent}{name}{eol}{indent}{{{eol}{indent}}}{eol}"
     return f"{indent}{name}{eol}{indent}{{{eol}{content_str}{indent}}}{eol}"
 
+# Spawn slots per carrier prefab (carrierSpawns must list every slot in order).
+CARRIER_SLOTS = {'AlliedCarrier': 9, 'EnemyCarrier': 9, 'EnemyCarrier2': 9}
+
 # C# field names that don't follow the plain camelCase rule.
 _CAMEL_OVERRIDES = {'b_eq_assignment_mode': 'b_eqAssignmentMode'}
 
@@ -1219,6 +1222,7 @@ class Mission:
 
         # --- Unit Instance ID ---
         uid = len(self.units) + 1  # Start IDs at 1 instead of 0
+        self._carrier_slots = getattr(self, '_carrier_slots', {})
 
         # --- Attach Action Helper ---
         from pytol.classes import actions as _actions
@@ -1457,6 +1461,20 @@ class Mission:
             mp_select_enabled=mp_select_enabled,
             spawn_chance=spawn_chance
         )
+
+    def add_unit_on_carrier(self, unit_obj: Unit, carrier_id: int, slot: int) -> int:
+        """
+        Spawn a unit (player, multiplayer slot or AI aircraft) on a carrier spawn slot. The game attaches it to
+        the slot's deck position at spawn (AICarrierSpawn.OnWillSpawnCarrierUnit); the aircraft must be
+        carrier-capable (F/A-26B, F-45A, T-55, EF-24G, AV-42C...).
+        """
+        carrier = next(u for u in self.units if u['unitInstanceID'] == carrier_id)
+        cx, cy, cz = carrier['unit_obj'].global_position
+        unit_obj.global_position = [cx, cy + 24.0, cz]
+        unit_obj.rotation = list(carrier['unit_obj'].rotation)
+        uid = self.add_unit(unit_obj, placement="airborne", on_carrier=True)
+        self._carrier_slots.setdefault(carrier_id, {})[slot] = uid
+        return uid
 
     def add_unit_to_group(self, team: str, group_name: str, unit_instance_id: int):
         """Assigns a unit (by its instance ID) to a unit group.
@@ -2010,6 +2028,11 @@ class Mission:
             u = u_data['unit_obj']
             uid = int(u_data['unitInstanceID'])
             unit_fields = {**(u_data.get('unit_fields') or {}), **(getattr(u, 'unit_fields', {}) or {})}
+            slots = getattr(self, '_carrier_slots', {}).get(uid)
+            if slots is not None:
+                # VTEdCarrierSpawnData: every slot, in order, as slot:unitID:altIdx (-1 = main spawn) or slot:-1
+                unit_fields['carrier_spawns'] = "".join(f"{i}:{slots[i]}:-1;" if i in slots else f"{i}:-1;"
+                                                        for i in range(CARRIER_SLOTS.get(u.unit_id, 9)))
             group = reverse_group_map.get(uid) or unit_fields.get('unit_group') or unit_fields.get('unitGroup')
 
             # Field order follows the class hierarchy, most derived class first.
@@ -2245,7 +2268,9 @@ class Mission:
             
             if isinstance(o.waypoint, Waypoint):
                 waypoint_id = o.waypoint.id
-            if type(waypoint_id) is not int:
+            elif isinstance(o.waypoint, Unit):
+                waypoint_id = f"unit:{self._resolve_link_id(o.waypoint)}"  # follows the unit (e.g. a moving carrier)
+            if not (type(waypoint_id) is int or (isinstance(waypoint_id, str) and waypoint_id.startswith(("unit:", "wpt:")))):
                 waypoint_id = ""
             prereq_ids = []
             if o.prereqs:
@@ -2325,11 +2350,8 @@ class Mission:
 
             # Resolve waypoint reference (if provided)
             waypoint_field = "null"
-            try:
-                if isinstance(waypoint_id, int):
-                    waypoint_field = str(waypoint_id)
-            except Exception:
-                waypoint_field = "null"
+            if waypoint_id != "":
+                waypoint_field = str(waypoint_id)
 
             obj_str = f"\t\tObjective{eol}\t\t{{{eol}" \
                     f"\t\t\tobjectiveName = {o.name}{eol}" \
