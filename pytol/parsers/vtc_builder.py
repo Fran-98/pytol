@@ -183,7 +183,8 @@ class Campaign:
         
         # Save the .vtc file
         vtc_path = output_path / f"{self.campaign_id}.vtc"
-        with open(vtc_path, 'w', encoding='utf-8') as f:
+        # LF only: the game splits lines on '\n' and keeps a CR in every value (campaignID would not match)
+        with open(vtc_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(self.to_vtc_string())
         self._log(f"✓ Saved campaign file: {vtc_path.name}")
         
