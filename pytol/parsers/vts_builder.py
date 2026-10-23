@@ -21,6 +21,7 @@ from pytol.classes.mission_objects import (
     RandomEvent, WeatherPreset
 )
 from pytol.classes.actions import GlobalValueActions
+from pytol.mission_helpers import MissionHelpers
 from pytol.terrain.mission_terrain_helper import MissionTerrainHelper
 from pytol.terrain.terrain_calculator import TerrainCalculator
 from pytol.misc.logger import create_logger
@@ -155,7 +156,7 @@ def _snake_to_camel(snake_str: str) -> str:
 
 # --- Main Mission Class ---
 
-class Mission:
+class Mission(MissionHelpers):
 
     def validate_all_blocks(self) -> List[str]:
         """
@@ -2863,6 +2864,13 @@ class Mission:
 
         vts_path = os.path.join(mission_dir, f"{self.scenario_id}.vts")
         self._save_to_file(vts_path)
+        try:  # log-only: what the game's loader would ignore or fail on
+            from pytol.parsers.vts_validator import validate
+            with open(vts_path, encoding='utf-8') as f:
+                for problem in validate(f.read()):
+                    self.logger.warning(f"[Loader check] {problem}")
+        except Exception as e:
+            self.logger.error(f"Loader check failed to run: {e}")
 
         # Record last saved paths for convenience exports
         self._last_saved_dir = mission_dir

@@ -1,4 +1,4 @@
-__version__ = "0.6.0"  # single source: pyproject reads it via [tool.hatch.version]
+__version__ = "0.7.0"  # single source: pyproject reads it via [tool.hatch.version]
 
 # --- Core Mission Building ---
 from .parsers.vts_builder import Mission, NATO_PHONETIC_ALPHABET

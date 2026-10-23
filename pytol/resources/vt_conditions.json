@@ -1,0 +1,533 @@
+{
+ "AIAircraftSpawn": {
+  "SC_FuelPercent": [
+   {
+    "name": "comparison",
+    "type": "HealthComparisons"
+   },
+   {
+    "name": "percent",
+    "type": "float"
+   }
+  ],
+  "SC_IsLanded": []
+ },
+ "AIMissileSilo": {
+  "SC_CountdownStarted": [],
+  "SC_MissileDestroyed": [],
+  "SC_MissileEscaped": [],
+  "SC_MissileLaunched": []
+ },
+ "AIUnitSpawn": {
+  "SCC_GetsDamaged": [],
+  "SCC_GetsDamagedByAny": [
+   {
+    "name": "damagers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_GetsKilled": [],
+  "SCC_GetsKilledBy": [
+   {
+    "name": "killer",
+    "type": "UnitReference"
+   }
+  ],
+  "SCC_GetsKilledByAny": [
+   {
+    "name": "killers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_NearPosition": [
+   {
+    "name": "point",
+    "type": "FixedPoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_NearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_WasDamagedByAny": [
+   {
+    "name": "damagers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SC_DetectedBy": [
+   {
+    "name": "d_team",
+    "type": "Teams"
+   }
+  ],
+  "SC_HealthLevel": [
+   {
+    "name": "comparison",
+    "type": "HealthComparisons"
+   },
+   {
+    "name": "percent",
+    "type": "float"
+   }
+  ],
+  "SC_IsAlive": []
+ },
+ "MultiplayerSpawn": {
+  "SCC_Airspeed": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "airspeed",
+    "type": "float"
+   }
+  ],
+  "SCC_Altitude": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "altitude",
+    "type": "float"
+   }
+  ],
+  "SCC_AltitudeRadar": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "altitude",
+    "type": "float"
+   }
+  ],
+  "SCC_BudgetComparison": [
+   {
+    "name": "comp",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "amount",
+    "type": "int"
+   }
+  ],
+  "SCC_EnginesOn": [],
+  "SCC_FuelLevel": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "percent",
+    "type": "float"
+   }
+  ],
+  "SCC_GetsDamaged": [],
+  "SCC_GetsDamagedByAny": [
+   {
+    "name": "damagers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_GetsDetected": [],
+  "SCC_GetsKilled": [],
+  "SCC_GetsKilledBy": [
+   {
+    "name": "killer",
+    "type": "UnitReference"
+   }
+  ],
+  "SCC_GetsKilledByAny": [
+   {
+    "name": "killers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_IsAlive": [],
+  "SCC_IsLockingTarget": [
+   {
+    "name": "target",
+    "type": "UnitReference"
+   },
+   {
+    "name": "method",
+    "type": "PlayerSpawn.TargetingMethods"
+   }
+  ],
+  "SCC_IsLockingTgtList": [
+   {
+    "name": "list",
+    "type": "UnitReferenceList"
+   },
+   {
+    "name": "method",
+    "type": "PlayerSpawn.TargetingMethods"
+   }
+  ],
+  "SCC_IsUsingAltNumber": [
+   {
+    "name": "number",
+    "type": "float"
+   }
+  ],
+  "SCC_Landed": [],
+  "SCC_LandedAtWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_LivesRemaining": [
+   {
+    "name": "comp",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "amount",
+    "type": "int"
+   }
+  ],
+  "SCC_NearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_Spawns": [],
+  "SCC_SurfaceSpeed": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "surfaceSpeed",
+    "type": "float"
+   }
+  ],
+  "SCC_WasDamagedByAny": [
+   {
+    "name": "damagers",
+    "type": "UnitReferenceList"
+   }
+  ]
+ },
+ "PlayerSpawn": {
+  "SCC_Airspeed": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "airspeed",
+    "type": "float"
+   }
+  ],
+  "SCC_Altitude": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "altitude",
+    "type": "float"
+   }
+  ],
+  "SCC_AltitudeRadar": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "altitude",
+    "type": "float"
+   }
+  ],
+  "SCC_ConnectedToTanker": [
+   {
+    "name": "tankerUnit",
+    "type": "UnitReference"
+   }
+  ],
+  "SCC_DetectedBy": [
+   {
+    "name": "d_team",
+    "type": "Teams"
+   }
+  ],
+  "SCC_EnginesOn": [],
+  "SCC_FuelLevel": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "percent",
+    "type": "float"
+   }
+  ],
+  "SCC_GetsDetected": [],
+  "SCC_HasSensorEnabled": [
+   {
+    "name": "sensor",
+    "type": "SCCPlayerSensors"
+   }
+  ],
+  "SCC_IsDamaged": [],
+  "SCC_IsLockingTarget": [
+   {
+    "name": "target",
+    "type": "UnitReference"
+   },
+   {
+    "name": "method",
+    "type": "TargetingMethods"
+   }
+  ],
+  "SCC_IsLockingTgtList": [
+   {
+    "name": "list",
+    "type": "UnitReferenceList"
+   },
+   {
+    "name": "method",
+    "type": "TargetingMethods"
+   }
+  ],
+  "SCC_Landed": [],
+  "SCC_NearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_PitchComparison": [
+   {
+    "name": "c",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "pitch",
+    "type": "float"
+   }
+  ],
+  "SCC_RollComparison": [
+   {
+    "name": "c",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "roll",
+    "type": "float"
+   }
+  ],
+  "SCC_SurfaceSpeed": [
+   {
+    "name": "comparison",
+    "type": "FloatComparisons"
+   },
+   {
+    "name": "surfaceSpeed",
+    "type": "float"
+   }
+  ],
+  "SCC_UsingWeaponStr": [
+   {
+    "name": "shortName",
+    "type": "string"
+   }
+  ],
+  "SCC_WeaponCount": [
+   {
+    "name": "shortName",
+    "type": "string"
+   },
+   {
+    "name": "comparison",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "compareCount",
+    "type": "float"
+   }
+  ]
+ },
+ "SCCUnitList": {
+  "SCC_AllAlive": [],
+  "SCC_AllUnitDetected": [
+   {
+    "name": "team",
+    "type": "Teams"
+   }
+  ],
+  "SCC_AnyGetsDamaged": [],
+  "SCC_AnyGetsDamagedBy": [
+   {
+    "name": "damagers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_AnyGetsKilled": [],
+  "SCC_AnyGetsKilledBy": [
+   {
+    "name": "killers",
+    "type": "UnitReferenceList"
+   }
+  ],
+  "SCC_AnyNearPoint": [
+   {
+    "name": "fp",
+    "type": "FixedPoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   },
+   {
+    "name": "spherical",
+    "type": "bool"
+   }
+  ],
+  "SCC_AnyNearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_AnyUnitDetected": [
+   {
+    "name": "team",
+    "type": "Teams"
+   }
+  ],
+  "SCC_BudgetComparison": [
+   {
+    "name": "comp",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "amount",
+    "type": "int"
+   }
+  ],
+  "SCC_NumAlive": [
+   {
+    "name": "comparison",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "count",
+    "type": "float"
+   }
+  ],
+  "SCC_NumNearWP": [
+   {
+    "name": "waypoint",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   },
+   {
+    "name": "comparison",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "count",
+    "type": "float"
+   }
+  ]
+ },
+ "VTSODestructible": {
+  "SCC_IsDestroyed": []
+ },
+ "VTUnitGroup": {
+  "SCC_AllAlive": [],
+  "SCC_AllUnitDetected": [
+   {
+    "name": "team",
+    "type": "Teams"
+   }
+  ],
+  "SCC_AnyGetsKilled": [],
+  "SCC_AnyLandedNearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_AnyNearPoint": [
+   {
+    "name": "fp",
+    "type": "FixedPoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   },
+   {
+    "name": "spherical",
+    "type": "bool"
+   }
+  ],
+  "SCC_AnyNearWaypoint": [
+   {
+    "name": "wpt",
+    "type": "Waypoint"
+   },
+   {
+    "name": "radius",
+    "type": "float"
+   }
+  ],
+  "SCC_AnyUnitDetected": [
+   {
+    "name": "team",
+    "type": "Teams"
+   }
+  ],
+  "SCC_NumAlive": [
+   {
+    "name": "comparison",
+    "type": "IntComparisons"
+   },
+   {
+    "name": "count",
+    "type": "float"
+   }
+  ]
+ }
+}

@@ -11,6 +11,9 @@ import sys
 from pytol.resources.resources import load_json_data
 
 VT_EVENTS = load_json_data('vt_events.json')['classes']
+VT_CONDITIONS = load_json_data('vt_conditions.json')  # {game class: {SCC_ method: [{name, type}]}}, see tools in pytol-mission
+# Which game class a condition component calls its method on (SCCUnit: the unit's own class and its bases).
+CONDITION_CLASS = {'SCCUnitList': 'SCCUnitList', 'SCCUnitGroup': 'VTUnitGroup', 'SCCStaticObject': 'VTSODestructible'}
 TARGET_CLASS = {'Objective': 'VTObjective', 'UnitGroup': 'VTUnitGroup', 'Timed_Events': 'VTTimedEventGroup',
                 'Trigger_Events': 'ScenarioTriggerEvents', 'Event_Sequences': 'VTSequencedEvent',
                 'System': 'VTScenario', 'Base': 'VTMapEdScenarioBasePrefab', 'Static_Object': 'VTSODestructible'}
@@ -81,6 +84,43 @@ def _unit_classes(root):
     return out
 
 
+def _condition_method(unit_class, method):
+    """Parameter list of `method` on a unit class (walking its bases), or None when no class of its hierarchy has it."""
+    for cls in unit_class.__mro__:
+        found = VT_CONDITIONS.get(cls.__name__, {}).get(method)
+        if found is not None:
+            return found
+    return None
+
+
+def check_conditions(root):
+    """Problems with SCCUnit / SCCUnitList / SCCUnitGroup / SCCStaticObject conditions: the method must exist on the
+    class the game resolves it on, with the number of parameters the game parses (a UnitReferenceList takes a ';' list)."""
+    from pytol.classes.units import ID_TO_CLASS
+    units = {}
+    for _, v, _ in next((c for c in root[2] if c[0] == 'UNITS'), ('', {}, []))[2]:
+        units[v.get('unitInstanceID')] = ID_TO_CLASS.get(v.get('unitID'))
+    problems = []
+    for path, values, children in _walk(root):
+        if path[-1] != 'COMP' or values.get('type') not in ('SCCUnit', *CONDITION_CLASS):
+            continue
+        kind, method = values['type'], values.get('methodName', '')
+        count = len([c for c in children if c[0] == 'methodParameters'])
+        if kind == 'SCCUnit':
+            unit = units.get(values.get('unit', '').split(':')[0])
+            if unit is None:
+                problems.append(f"{kind}: unit {values.get('unit')} does not exist")
+                continue
+            params, where = _condition_method(unit, method), unit.__name__
+        else:
+            params, where = VT_CONDITIONS.get(CONDITION_CLASS[kind], {}).get(method), CONDITION_CLASS[kind]
+        if params is None:
+            problems.append(f"{kind} calls {where}.{method}, which the game does not have")
+        elif len(params) != count and not (any('List' in p['type'] for p in params) and count >= len(params) - 1):
+            problems.append(f"{where}.{method} takes {len(params)} parameters, the file gives {count}")
+    return problems
+
+
 def validate(text, unit_classes=None):
     """List of problems. unit_classes ({unitInstanceID: game class}) is read from the file when omitted."""
     root, problems = parse_game(text)
@@ -117,7 +157,7 @@ def validate(text, unit_classes=None):
                 problems.append(f"EventTarget '{display}': param {i} type {t} should be {event['params'][i]['type']}")
         if event and len(params) != len(event['params']):
             problems.append(f"EventTarget '{display}': {len(params)} params, method takes {len(event['params'])}")
-    return problems
+    return problems + check_conditions(root)
 
 
 if __name__ == '__main__':

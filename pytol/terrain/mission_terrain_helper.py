@@ -9,7 +9,88 @@ from scipy.spatial import cKDTree
 from .terrain_calculator import TerrainCalculator
 from ..misc.logger import create_logger
 
-class MissionTerrainHelper:
+class PlacementQueries:
+    """Placement searches that need no mission state: dry gentle ground, open water, points along a leg.
+
+    Mixed into MissionTerrainHelper. Searches that pick random points take a `random.Random` so a seed reproduces them.
+    """
+    MAP_MARGIN = 8000.0       # keep content away from the map edge (edge terrain is blended by the game)
+    MAX_GROUND_SLOPE_DEG = 15.0
+
+    def in_map(self, x, z, margin=None):
+        """True inside the playable area (the map minus `margin`, default MAP_MARGIN)."""
+        margin = self.MAP_MARGIN if margin is None else margin
+        size = self.tc.total_map_size_meters
+        return margin <= x <= size - margin and margin <= z <= size - margin
+
+    def is_land(self, x, z, max_slope_degrees=None):
+        """Dry, gentle ground inside the playable area."""
+        slope = self.MAX_GROUND_SLOPE_DEG if max_slope_degrees is None else max_slope_degrees
+        if not self.in_map(x, z) or self.tc.get_terrain_height(x, z) < 5.0:
+            return False
+        return self.tc.get_terrain_normal(x, z)[1] >= np.cos(np.radians(slope))
+
+    def is_water(self, x, z):
+        return self.in_map(x, z) and self.tc.get_terrain_height(x, z) <= 0.0
+
+    def find_open_land(self, x, z, radius, footprint=10.0, rng=None, tries=60, is_free=None):
+        """Random dry point within `radius` of (x, z) that keeps `footprint` meters clear of city buildings and static
+        prefabs (open lots inside a town count as clear) and, when given, passes `is_free(x, z, footprint)` (other units
+        you placed). The search starts at the center and spirals out; when the area is crowded it widens, up to 3x.
+        Returns (x, y, z) or None."""
+        rng = rng or random
+        for scale in (1.0, 3.0):
+            for i in range(tries):
+                r = radius * scale * (1 + i / tries) * np.sqrt(rng.random()) if i else 0.0
+                a = rng.uniform(0, 2 * np.pi)
+                px, pz = x + r * np.sin(a), z + r * np.cos(a)
+                if self.is_land(px, pz) and (is_free is None or is_free(px, pz, footprint)) \
+                        and self.tc.is_area_clear(px, pz, footprint):
+                    return (float(px), float(self.tc.get_terrain_height(px, pz)), float(pz))
+        return None
+
+    def find_land_in_band(self, center, min_m, max_m, rng=None, tries=200, accept=None):
+        """Random dry point between `min_m` and `max_m` from `center` (x, y, z), optionally filtered by accept(point)."""
+        rng = rng or random
+        for _ in range(tries):
+            r, a = rng.uniform(min_m, max_m), rng.uniform(0, 2 * np.pi)
+            x, z = center[0] + r * np.sin(a), center[2] + r * np.cos(a)
+            if self.is_land(x, z):
+                p = (float(x), float(self.tc.get_terrain_height(x, z)), float(z))
+                if accept is None or accept(p):
+                    return p
+        return None
+
+    def find_open_water(self, center, max_m, clearance=1500.0, rng=None, tries=300, accept=None):
+        """Water point within `max_m` of `center` with open water `clearance` meters all around, or None."""
+        rng = rng or random
+        for _ in range(tries):
+            r, a = rng.uniform(0, max_m), rng.uniform(0, 2 * np.pi)
+            x, z = center[0] + r * np.sin(a), center[2] + r * np.cos(a)
+            ring = [(x + clearance * np.sin(k * np.pi / 4), z + clearance * np.cos(k * np.pi / 4)) for k in range(8)]
+            if self.is_water(x, z) and all(self.is_water(px, pz) for px, pz in ring):
+                p = (float(x), 0.0, float(z))
+                if accept is None or accept(p):
+                    return p
+        return None
+
+    def water_loop(self, center, radius, points=8):
+        """Closed patrol loop of `points` points on open water around `center` (every point and midpoint on water), or None."""
+        pts = [(center[0] + radius * np.sin(2 * np.pi * k / points), 0.0,
+                center[2] + radius * np.cos(2 * np.pi * k / points)) for k in range(points)]
+        checks = pts + [((p[0] + q[0]) / 2, 0.0, (p[2] + q[2]) / 2) for p, q in zip(pts, pts[1:] + pts[:1])]
+        return [tuple(float(c) for c in p) for p in pts] if all(self.is_water(p[0], p[2]) for p in checks) else None
+
+    def point_along(self, a, b, meters, side=0.0):
+        """Point `meters` from a toward b, shifted `side` meters to the right of the a->b line, on the ground."""
+        d = np.array([b[0] - a[0], b[2] - a[2]], dtype=float)
+        d /= np.linalg.norm(d)
+        right = np.array([d[1], -d[0]])
+        x, z = np.array([a[0], a[2]], dtype=float) + d * meters + right * side
+        return (float(x), float(self.tc.get_terrain_height(x, z)), float(z))
+
+
+class MissionTerrainHelper(PlacementQueries):
     """
     Uses a TerrainCalculator instance to provide high-level, mission-centric
     data queries about the map, such as finding landing zones, road points,

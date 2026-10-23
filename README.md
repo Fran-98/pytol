@@ -44,6 +44,9 @@ Pytol is the building block: it writes exactly what the game loads, and leaves m
 * **2D Visualization** *(optional)*: Lightweight static mission maps and clean overviews using matplotlib - perfect for mission briefings.
 * **3D Visualization** *(optional)*: Interactive visualization of terrain and complete missions using PyVista.
 * **Event Sequences & Random Events**: Script ordered event chains (EventSequences) with looping and conditional logic, and define weighted random actions (RandomEvents) with per-action conditional graphs. Supports full nested conditional graphs for both features.
+* **Logic Toolkit**: `pytol.logic` (conditions with `&` `|` `~`, counters, phases), event helpers on `Mission` (`on_enter`, `on_condition`, `timer`, `sequence`, `when`) and objective patterns (`pytol.patterns`: plan B, counters).
+* **Checks without the game**: a validator that applies the loader's rules and the game's condition catalog, a logic-graph analyzer and a duration/intensity simulator.
+* **Placement Queries**: open land and water searches, offsets along a leg, unit facts (`pytol.classes.unit_catalog`).
 * **If / Else Logic**: `ConditionalAction` writes the game's IF / ELSE IF / ELSE statements, with nested blocks.
 * **Conditional Graphs**: All conditionals (including those in EventSequences and RandomEvents) support full graph emission, including methodParameters as nested blocks for VTS compatibility.
 * **Trigger/Proximity Improvements**: Proximity triggers only emit `waypoint = null` if no waypoint is provided, matching in-game editor output.

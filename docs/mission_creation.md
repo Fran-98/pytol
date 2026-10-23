@@ -364,6 +364,77 @@ Notes:
 - See examples/example_base_spawns.py for a full walkthrough.
 
 
+## Writing logic faster
+
+### Event helpers on `Mission`
+
+These build the same objects as the sections above and give them ids that never collide with ones you add yourself.
+
+```python
+mission.on_enter("At the IP", ip, 4000, [SystemActions().display_message("Push!", 4.0)])   # once, player enters the radius
+mission.on_condition("Depot hit", cond, [..])            # once, the first time cond is true (a Cond, a tree or an id)
+begin = mission.timer("Check in", [(20.0, [..]), (90.0, [..])], start_now=True)
+begin, stop = mission.sequence("Reinforcements", [(depot_dead, 90.0, [spawn]), (None, 30.0, [..])], loop=False)
+fire = mission.random_choice("Axis", [(60, [..]), (40, [..])])                       # weighted, rolled in-game
+fire = mission.when(cond, then=[..], elif_=[(other, [..])], else_=[..])              # IF / ELSE IF / ELSE
+```
+
+`sequence` steps are `(condition or None, seconds, actions)` and a step fires `seconds` **after** its condition becomes
+true. (The game waits the delay first and then the condition; the helper writes two nodes to get the order people mean.)
+
+### `pytol.logic`: conditions, variables and phases
+
+```python
+from pytol.logic import Logic, Unit, Units, Players, chance
+
+L = Logic(mission)
+alarm = L.counter('alarm')                  # a global value; alarm.inc(), alarm.set(0), alarm >= 2 (a condition)
+low = Players([player_id]).radar_alt_below(150) & ~Players([player_id]).detected_by('Enemy')
+Units(depot_ids).alive() < 3                # SCC_NumAlive
+Unit(player_id).faster(300)                 # knots in, m/s written
+
+ph = L.phases()                             # a phase machine on one global value
+ph.add('ingress'); ph.add('attack', checkpoint=True); ph.add('egress')
+ph.goto(0, Players([player_id]).near(ip, 4000), 1)
+ph.goto(1, Units(depot_ids).alive() < 2, 2)
+ph.build()                                  # raises if a phase is a dead end or unreachable
+```
+
+`&`, `|` and `~` compile to `SCCAnd` / `SCCOr` / `is_not`. The game has no negation on And/Or, so `~` applies De Morgan.
+Conditions are offered only where the game has the method: `Players` limits itself to what both `PlayerSpawn` and
+`MultiplayerSpawn` have, so it is safe for co-op.
+
+### `pytol.patterns`
+
+`conditional_objective`, `counter_objective` + `tally` ("destroy 6 of 10"), `contingency` (a plan B: a required objective
+that fails ends the mission, so the aims are optional and a required conditional completes when either succeeded) and
+`capture_base`.
+
+## Checking a mission without the game
+
+```python
+from pytol.parsers.vts_validator import validate     # the loader's own rules, plus: does each SCC condition method exist on that class?
+from pytol.parsers.vts_analyzer import analyze       # the logic graph: unreachable objectives/triggers, values read but never written,
+                                                     # missing or never-spawned units, two radio lines in one event list
+from pytol.analysis.simulate import simulate         # a typical flight: duration, intensity per minute, longest stretch without an event
+```
+
+`save_mission` already runs the validator and logs what it finds. `vt_conditions.json` (shipped in `pytol/resources`)
+lists the conditions of each game class. All three also run from the command line (`python -m pytol.parsers.vts_validator file.vts`).
+
+## Placement queries and unit facts
+
+```python
+h = mission.helper
+h.find_open_land(x, z, radius=800, footprint=25, rng=random.Random(3))     # dry, clear of buildings and static prefabs
+h.find_land_in_band(center, 5000, 12000, rng)                              # dry point at a distance band
+h.find_open_water(center, 20000, clearance=1500, rng=rng)                   # open sea
+h.water_loop(center, 6000)                                                  # closed patrol loop on water, or None
+h.point_along(a, b, 4000, side=1000)                                        # 4 km toward b, 1 km to the right
+
+from pytol.classes.unit_catalog import can_join_group, footprint, team_of, SAM_SYSTEMS
+```
+
 ## Resources
 
 Resources allow you to include custom audio, imagery, and other mission assets. Pytol registers each asset in the ResourceManifest and copies files into the mission folder when you call `save_mission()`.
