@@ -44,6 +44,7 @@ Pytol is the building block: it writes exactly what the game loads, and leaves m
 * **2D Visualization** *(optional)*: Lightweight static mission maps and clean overviews using matplotlib - perfect for mission briefings.
 * **3D Visualization** *(optional)*: Interactive visualization of terrain and complete missions using PyVista.
 * **Event Sequences & Random Events**: Script ordered event chains (EventSequences) with looping and conditional logic, and define weighted random actions (RandomEvents) with per-action conditional graphs. Supports full nested conditional graphs for both features.
+* **If / Else Logic**: `ConditionalAction` writes the game's IF / ELSE IF / ELSE statements, with nested blocks.
 * **Conditional Graphs**: All conditionals (including those in EventSequences and RandomEvents) support full graph emission, including methodParameters as nested blocks for VTS compatibility.
 * **Trigger/Proximity Improvements**: Proximity triggers only emit `waypoint = null` if no waypoint is provided, matching in-game editor output.
 
@@ -88,8 +89,8 @@ See [Visualization Guide](pytol/visualization/README.md) for details on both sys
 
 1. Clone the repo
 ```bash
-git clone [https://github.com/Fran-98/pytol](https://github.com/Fran-98/pytol)  # Replace with your actual repo URL
-cd Pytol
+git clone https://github.com/Fran-98/pytol
+cd pytol
 ```
 
 2. Install in editable mode

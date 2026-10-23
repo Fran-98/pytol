@@ -12,13 +12,22 @@ This module provides both 2D (matplotlib) and 3D (pyvista) visualization capabil
 - Provides: MissionVisualizer, TerrainVisualizer
 """
 
-import importlib.util
+import importlib
 
-# Check for matplotlib (2D visualization)
-MATPLOTLIB_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
-PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
 
-PYVISTA_AVAILABLE = importlib.util.find_spec("pyvista") is not None
+def _usable(name):
+    """True when the package imports. A package that is installed but broken (a missing native dependency) counts as
+    absent, so `import pytol` never fails because of an optional extra."""
+    try:
+        importlib.import_module(name)
+        return True
+    except Exception:
+        return False
+
+
+MATPLOTLIB_AVAILABLE = _usable("matplotlib")
+PIL_AVAILABLE = _usable("PIL")
+PYVISTA_AVAILABLE = _usable("pyvista")
 
 # Import available visualizers
 __all__ = []

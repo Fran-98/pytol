@@ -11,7 +11,7 @@ from pytol.classes.units import create_unit
 from pytol.classes.objectives import create_objective
 from pytol.classes.conditionals import ConditionalTree, create_conditional
 from pytol.classes.actions import SystemActions, GlobalValueActions, ObjectiveActions
-from pytol.classes.mission_objects import (Trigger, Waypoint, GlobalValue, ConditionalAction,
+from pytol.classes.mission_objects import (Trigger, Waypoint, GlobalValue, ConditionalAction, ConditionalBlock, ConditionalBlock,
                                            EventSequence, SequenceEvent)
 from pytol.parsers.vts_validator import validate, parse_game
 
@@ -61,7 +61,10 @@ def vts_text(tmp_path_factory):
     tree.set_root(0)
     cond_id = m.add_conditional(tree, conditional_id=0)
     m.add_conditional_action(ConditionalAction(id=0, name="While SAM alive", conditional_id=cond_id,
-                                               actions=[SystemActions().display_message("SAM active", 3.0)]))
+                                               actions=[SystemActions().display_message("SAM active", 3.0)],
+                                               else_if=[ConditionalBlock(conditional_id=cond_id, name="elif",
+                                                                         actions=[SystemActions().display_message("elif", 3.0)])],
+                                               else_actions=[SystemActions().display_message("SAM dead", 3.0)]))
     m.add_event_sequence(EventSequence(id=0, sequence_name="Intro", start_immediately=True, events=[
         SequenceEvent(node_name="hello", delay=1.0, actions=[SystemActions().display_message("Go", 3.0)])]))
 
@@ -87,7 +90,8 @@ def test_specific_fields(vts_text):
     assert strike[1]['preReqObjectives'] == '0;'
     ca = next(c for c in children if c[0] == 'ConditionalActions')[2][0]
     assert [c[0] for c in ca[2]] == ['BASE_BLOCK']
-    assert [c[0] for c in ca[2][0][2]] == ['CONDITIONAL', 'ACTIONS']
+    assert [c[0] for c in ca[2][0][2]] == ['CONDITIONAL', 'ACTIONS', 'ELSE_IF', 'ELSE_ACTIONS']
+    assert ca[2][0][2][2][1]['blockId'] != ca[2][0][1]['blockId']
     sequence = next(c for c in children if c[0] == 'EventSequences')[2][0]
     event = next(c for c in sequence[2] if c[0] == 'EVENT')
     assert 'conditional' not in event[1]

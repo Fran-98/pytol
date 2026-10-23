@@ -107,7 +107,7 @@ def _format_id_list(ids: List[Any]) -> str:
     """Formats a list of IDs into a VTS-compatible string."""
     return ";".join(map(str, ids))
 
-# [VTEvent] actions extracted from the game (tools/extract_vt_events.py in pytol-mission):
+# [VTEvent] actions extracted from the game (see pytol/resources/vt_events.json):
 # class -> {'base', 'events': {display name: {'method', 'params': [{'name', 'type'}]}}}
 VT_EVENTS = load_json_data('vt_events.json')['classes']
 # Object the game calls the method on, per VTEventTarget.TargetTypes (units resolve to their own class).
@@ -1669,7 +1669,7 @@ class Mission:
         if any(ca.id == ca_obj.id for ca in self.conditional_actions):
             self.logger.warning(f"ConditionalAction ID {ca_obj.id} already exists.")
         # Ensure the linked conditional ID actually exists (optional check)
-        if ca_obj.conditional_id not in self.conditionals:
+        if not hasattr(ca_obj.conditional_id, '__dataclass_fields__') and ca_obj.conditional_id not in self.conditionals:
             self.logger.warning(f"ConditionalAction '{ca_obj.name}' links to non-existent Conditional ID '{ca_obj.conditional_id}'.")
 
         self.conditional_actions.append(ca_obj)
@@ -2446,23 +2446,41 @@ class Mission:
 
         # --- CONDITIONAL ACTIONS ---
         ca_c = ""
-        for ca in self.conditional_actions: # ca is ConditionalAction
-            targets_c = "".join(self._format_event_target(target, eol) for target in ca.actions)
+        next_block_id = max((ca.id for ca in self.conditional_actions), default=-1) + 1
 
-            cond = ca.conditional_id
-            if not isinstance(cond, Conditional) and not hasattr(cond, 'components'):
-                cond = next((self.conditionals[k] for k in (cond, str(cond)) if k in self.conditionals), None)
-                if cond is None and str(cond).lstrip('-').isdigit():
-                    cond = self.conditionals.get(int(ca.conditional_id))
+        def resolve_cond(cond):
+            if isinstance(cond, Conditional) or hasattr(cond, 'components'):
+                return cond
+            found = next((self.conditionals[k] for k in (cond, str(cond)) if k in self.conditionals), None)
+            if found is None and str(cond).lstrip('-').isdigit():
+                found = self.conditionals.get(int(cond))
+            return found
+
+        def format_block(tag, blk, block_id, depth):
+            """BASE_BLOCK / ELSE_IF / NESTED_IF (+ ELSE_ACTIONS) as the editor writes them; blocks nest by depth."""
+            nonlocal next_block_id
+            t = "	" * (depth + 1)
+            cond = resolve_cond(blk.conditional_id)
             if cond is None:
-                self.logger.warning(f"ConditionalAction {ca.id} has no valid conditional; it will never fire.")
+                self.logger.warning(f"ConditionalAction block '{blk.name}' has no valid conditional; it will never fire.")
                 cond_block = ""
             else:
                 cond_block = self._format_conditional("0", cond)
-            actions_block = _format_block("ACTIONS", f"\t\t\t\teventName = {eol}{targets_c}", 3)
-            base_block = _format_block("BASE_BLOCK", f"\t\t\t\tblockName = {ca.name}{eol}\t\t\t\tblockId = {ca.id}{eol}"
-                                                     f"{cond_block}{actions_block}", 3)
-            ca_c += f"\t\tConditionalAction{eol}\t\t{{{eol}\t\t\tid = {ca.id}{eol}\t\t\tname = {ca.name}{eol}{base_block}\t\t}}{eol}"
+            targets = "".join(self._format_event_target(target, eol) for target in blk.actions)
+            body = (f"{t}blockName = {blk.name}{eol}{t}blockId = {block_id}{eol}{cond_block}"
+                    + _format_block("ACTIONS", f"{t}	eventName = {eol}{targets}", depth + 1))
+            for sub_tag, subs in (("NESTED_IF", blk.nested), ("ELSE_IF", blk.else_if)):
+                for sub in subs:
+                    next_block_id += 1
+                    body += format_block(sub_tag, sub, next_block_id - 1, depth + 1)
+            if blk.else_actions:
+                else_targets = "".join(self._format_event_target(target, eol) for target in blk.else_actions)
+                body += _format_block("ELSE_ACTIONS", f"{t}	eventName = {eol}{else_targets}", depth + 1)
+            return _format_block(tag, body, depth)
+
+        for ca in self.conditional_actions: # ca is ConditionalAction
+            base_block = format_block("BASE_BLOCK", ca, ca.id, 3)
+            ca_c += f"		ConditionalAction{eol}		{{{eol}			id = {ca.id}{eol}			name = {ca.name}{eol}{base_block}		}}{eol}"
 
         # --- RANDOM EVENTS ---
         re_c = ""

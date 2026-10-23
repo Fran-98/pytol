@@ -59,7 +59,7 @@ print("Saved to:", mission.save_mission(os.path.join(VTOL_VR_PATH, "CustomScenar
 ## Map Selection and Realism Tips
 
 - Prefer maps with HeightMap terrain for best results with Pytol's terrain sampler. Recommended: `hMap2`, `costaOeste`, `Archipielago_1`.
-- The map `Akutan` is primarily mesh-based in Unity (not heightmap-generated), so it can not be used with this library.
+- The map `Akutan` is primarily mesh-based (not heightmap-generated), so it can not be used with this library.
 - Even with our accurate recreation, expect small height mismatches of up to ~1 m in some spots (bilinear vs mesh interpolation, collider differences). Always validate spawns in-game or add a small offset.
 
 ## Terrain Integration Workflow
@@ -67,193 +67,220 @@ print("Saved to:", mission.save_mission(os.path.join(VTOL_VR_PATH, "CustomScenar
 Pytol mirrors VTOL VR's terrain pipeline on mission load. Use the shared `TerrainCalculator` and `MissionTerrainHelper` instances exposed by `Mission` instead of sampling ad-hoc. The terrain internals are described in [Terrain Behavior](terrain_behavior.md).
 
 1. **Baseline placement:** `mission.tc.get_asset_placement(x, z, yaw)` returns a terrain-aligned `(position, rotation)` tuple that reproduces the editor’s snap-to-ground.
-2. **Smart placement:** `mission.tc.get_smart_placement(x, z, yaw)` inspects static prefabs, road splines, and procedural city tiles extracted from the Unity project. It will attach vehicles to roads, parking pads, rooftops, or open terrain exactly like the in-game placement gizmos.
+2. **Smart placement:** `mission.tc.get_smart_placement(x, z, yaw)` inspects static prefabs, road splines, and procedural city tiles extracted from the game assets. It will attach vehicles to roads, parking pads, rooftops, or open terrain exactly like the in-game placement gizmos.
 3. **High-level searches:** `mission.helper` exposes tactical queries (`find_flat_landing_zones`, `get_road_path`, `find_observation_post`, `has_line_of_sight`) built on the same terrain data.
-4. **Base and runway data:** `mission.add_unit_at_base_spawn(...)` pulls spawn pads from the packaged base spawn database, guaranteeing taxi paths and runway headings line up with Unity’s baked data.
+4. **Base and runway data:** `mission.add_unit_at_base_spawn(...)` pulls spawn pads from the packaged base spawn database, guaranteeing taxi paths and runway headings line up with the game's own data.
 
-Always reuse these helpers when building new features—hand-authored coordinates drift over time as Unity assets change, while the calculators stay synchronized with `E:\VTOL VR UNITY\Assets`.
+Always reuse these helpers when building new features—hand-authored coordinates drift over time as the game's assets change, while the calculators stay synchronized with the data extracted from the game.
 
 ## Core Concepts
 
 ### Mission Object
 
-The `Mission` class represents a complete VTOL VR mission file (.vts).
+`Mission` is a complete VTOL VR scenario (`.vts`). It loads the map once and exposes the terrain tools.
 
 ```python
 mission = Mission(
-    scenario_name="Mission Title",            # Display name in game
-    scenario_id="my_mission_01",              # Unique identifier (folder name)
-    description="Mission briefing text",      # Briefing shown to player
-    vehicle="F/A-26B",                        # Player aircraft (default: "AV-42C")
-    map_id="hMap2",                           # Map folder name (case-sensitive)
-    vtol_directory=r"C:\...\VTOL VR",        # Path to VTOL VR installation
-    verbose=True                              # Print progress messages (default: True)
+    scenario_name="Mission Title",            # display name in game
+    scenario_id="my_mission_01",              # unique id, also the output folder name
+    description="Mission description",
+    vehicle="F/A-26B",                        # player aircraft (default "AV-42C")
+    map_id="hMap2",                           # map folder inside CustomMaps (case-sensitive)
+    vtol_directory=r"C:\...\VTOL VR",         # game install; or pass map_path=<map folder> directly
+    verbose=True,
 )
+mission.tc          # TerrainCalculator: heights, normals, roads, cities, bases
+mission.helper      # MissionTerrainHelper: tactical queries (flat zones, choke points, line of sight)
 
-# Optional properties that can be set after creation
-mission.campaign_order_idx = 0                # Order in campaign (if part of one)
-mission.mission_info.rtb_location = (100000, 500, 50000)  # Return to base waypoint
-mission.mission_info.is_training = False      # Training mission flag
-mission.mission_info.force_equipment = []     # Lock player loadout (list of equipment IDs)
+mission.scenario_name = "New title"           # these can be changed until you save
+mission.rtb_wpt_id = home_waypoint            # return-to-base waypoint (object or id)
+mission.bullseye_id = bullseye_waypoint.id
+mission.env_name = "Night"                    # built-in time of day, or "Custom" with mission.custom_time_of_day = 18.6
+mission.add_briefing_note("Text shown in the briefing")
 ```
 
 ### Units
 
-Units represent aircraft, ground vehicles, ships, and static objects.
-
-#### Creating Aircraft
-
 ```python
-from pytol import Unit
+from pytol import create_unit
 
-# Fighter aircraft starting in the air
-fighter = Unit.create_aircraft(
-    unit_name="CAP Flight 1",
-    global_position=(100000, 2000, 50000),  # 2000m altitude
-    rotation=(0, 45, 0),                     # (pitch, yaw, roll)
-    unit_instance_id=1,
-    aircraft_type="FA-26B",
-    initial_speed=200.0,                     # m/s
-    fuel=1.0,                                 # 0.0 to 1.0
-    start_on_ground=False
-)
+# create_unit(unit id, name, team, [x, y, z], [pitch, yaw, roll], **fields)
+sam = create_unit("SamBattery1", "SAM 1", "Enemy", [x, 0, z], [0, 180, 0])
+sam_id = mission.add_unit(sam, placement="ground")      # "ground" snaps to terrain, roads and roofs; "airborne" keeps y
 
-# Aircraft starting on ground (use terrain placement)
-tc = TerrainCalculator(map_name="hMap2", vtol_directory=vtol_path)
-x, z = 105000, 52000
-placement = tc.get_smart_placement(x, z, yaw_degrees=90)
-
-parked = Unit.create_aircraft(
-    unit_name="Parked Enemy",
-    global_position=placement['position'],
-    rotation=placement['rotation'],
-    unit_instance_id=2,
-    aircraft_type="EF-24",
-    initial_speed=0.0,
-    start_on_ground=True,
-    engine_startup=False  # Engines off
-)
-
-mission.add_unit(fighter)
-mission.add_unit(parked)
+mission.add_unit_to_group("Enemy", "Alpha", sam_id)      # unit groups (AI orders, shared callsign)
 ```
 
-**Available Aircraft Types:**
-- `"FA-26B"` - F/A-26B (multirole, playable)
-- `"AV42C"` - AV-42C (VTOL attack aircraft, playable)
-- `"F45A"` - F-45A (air superiority fighter, playable)
-- `"T-55"` - T-55 (trainer jet, playable)
-- `"AH-94"` - AH-94 (attack helicopter, playable)
-- `"EF-24"` - EF-24 (enemy fighter)
-- `"ASF30"` - ASF-30 (enemy stealth fighter)
-- `"ASF58"` - ASF-58 (enemy bomber)
-- `"GAV25"` - GAV-25 (enemy gunship)
-
-#### Creating Ground Units
-
-```python
-# Armored vehicle
-tank = Unit.create_ground_unit(
-    unit_name="Enemy Tank",
-    global_position=(106000, 450, 51000),
-    rotation=(0, 180, 0),
-    unit_instance_id=10,
-    unit_type="TANK",
-    default_behavior="stationary"
-)
-
-# SAM site
-sam = Unit.create_ground_unit(
-    unit_name="SAM Battery",
-    global_position=(107000, 500, 52000),
-    unit_instance_id=11,
-    unit_type="SAM",
-    detection_mode="radar_on"
-)
-
-mission.add_unit(tank)
-mission.add_unit(sam)
-```
-
-**Ground Unit Types:**
-- `"TANK"` - Armored vehicle
-- `"APC"` - Armored personnel carrier
-- `"SAM"` - Surface-to-air missile system
-- `"AAA"` - Anti-aircraft artillery
-- `"ARTILLERY"` - Artillery piece
-- `"TRUCK"` - Supply truck
-
-**Behaviors:**
-- `"stationary"` - Unit stays in place
-- `"patrol"` - Unit patrols assigned waypoints
-- `"defend"` - Unit defends area
-- `"attack"` - Unit attacks targets
-
-#### Creating Ships
-
-```python
-# Carrier
-carrier = Unit.create_ship(
-    unit_name="CVN-76 Roosevelt",
-    global_position=(95000, 0, 48000),  # Sea level (y=0)
-    rotation=(0, 270, 0),
-    unit_instance_id=20,
-    ship_type="CARRIER",
-    speed=10.0  # knots
-)
-
-# Destroyer escort
-destroyer = Unit.create_ship(
-    unit_name="DDG Escort",
-    global_position=(95500, 0, 48000),
-    unit_instance_id=21,
-    ship_type="DESTROYER"
-)
-
-mission.add_unit(carrier)
-mission.add_unit(destroyer)
-```
-
-**Ship Types:**
-- `"CARRIER"` - Aircraft carrier (can spawn/recover aircraft)
-- `"DESTROYER"` - Guided missile destroyer
-- `"CRUISER"` - Cruiser
-- `"FRIGATE"` - Frigate
-- `"PATROL_BOAT"` - Fast patrol boat
-- `"TRANSPORT"` - Transport ship
+- Unit ids and their fields are in `pytol.classes.units` (`ID_TO_CLASS`); unknown fields raise an error.
+- Teams: `"Allied"` or `"Enemy"`. The prefab decides which side a unit id belongs to.
+- Stationary units (fixed SAMs, radars, structures) cannot join unit groups.
+- Aircraft that start at an airbase use `mission.add_unit_at_base_spawn(unit, base_index=..., category="hangar")`, see
+  Base Spawn Points below.
+- Unit actions come from the unit itself: `unit.actions.set_orbit_now(waypoint, radius, altitude)`.
 
 ### Terrain-Aware Placement
 
-Use `TerrainCalculator.get_smart_placement()` to automatically place units on terrain, roads, or building roofs:
+`placement="ground"` already uses `get_smart_placement`. Call the terrain tools directly for searches:
 
 ```python
-tc = TerrainCalculator(map_name="hMap2", vtol_directory=vtol_path)
-
-# Place unit on terrain/road/roof
-x, z = 105000, 52000
-yaw = 90  # Facing east
-
-placement = tc.get_smart_placement(x, z, yaw_degrees=yaw)
-# Returns: {
-#     'position': (x, height, z),
-#     'rotation': (pitch, yaw, roll),
-#     'type': 'terrain'  # or 'road', 'city_roof', 'static_roof'
-# }
-
-unit = Unit.create_ground_unit(
-    unit_name="Infantry Squad",
-    global_position=placement['position'],
-    rotation=placement['rotation'],
-    unit_instance_id=30,
-    unit_type="INFANTRY"
-)
+tc = mission.tc
+y = tc.get_terrain_height(x, z)
+tc.get_terrain_normal(x, z)                         # surface normal, for slope tests
+tc.is_area_clear(x, z, radius)                      # no building or static prefab within radius (open lots count as clear)
+tc.get_smart_placement(x, z, yaw_degrees=90)        # {'position', 'rotation'} on a roof, road, bridge or terrain
+tc.get_road_route((x0, z0), (x1, z1))               # [(x, y, z), ...] over the road network, or []
+mission.helper.find_flat_landing_zones(x, z, search_radius=5000, min_area_radius=30)
 ```
 
-**Placement Types:**
-- `'terrain'` - Natural ground height
-- `'road'` - On a road surface
-- `'city_roof'` - On a procedural city building roof
-- `'static_roof'` - On a static prefab building roof
+### Waypoints and paths
+
+```python
+from pytol import Waypoint, Path
+
+wp = Waypoint(name="IP", global_point=[x, y, z])
+mission.add_waypoint(wp)                            # returns the id; the object can be used wherever an id is expected
+route = Path(name="Convoy", points=[[x0, y0, z0], [x1, y1, z1]], loop=False, path_mode="Linear")
+mission.add_path(route)
+```
+
+Ground units only follow roads on `Linear` paths.
+
+### Objectives
+
+`create_objective(type, id, name, info, ...)` returns an objective of one of the game's types:
+
+| Type | Typical fields |
+|---|---|
+| `Fly_To` | `waypoint`, `trigger_radius` |
+| `Destroy` | `targets=[unit ids]`, `min_required` |
+| `Protect` | `target`, `radius`, `completion_mode` ("Waypoint" or "Trigger") |
+| `Land` | `waypoint`, `radius` |
+| `Pick_Up` / `Drop_Off` | `targets`, `min_required` (+ `unload_radius`, `dropoff_rally_pt`) |
+| `Join` | `target_unit`, `radius` |
+| `Refuel` | `targets=[tanker ids]`, `fuel_level` |
+| `Conditional` | `success_conditional`, `fail_conditional` (ids of conditionals) |
+| `Global_Value` | `current_value`, `target_value` (global values; completes on equality) |
+
+Common arguments: `required` (default True: failing it ends the mission), `prereqs=[objectives]`,
+`start_mode="Triggered"` (begins only when an event runs `ObjectiveActions(id).begin_objective()`),
+`start_event_targets` / `complete_event_targets` / `fail_event_targets` (lists of actions).
+
+```python
+from pytol import create_objective
+
+fly = create_objective("Fly_To", 0, "Ingress", "Fly to the IP.", waypoint=ip, trigger_radius=3000)
+kill = create_objective("Destroy", 1, "Strike", "Destroy the depot.", prereqs=[fly], waypoint=target_wpt,
+                        targets=depot_ids, min_required=3)
+land = create_objective("Land", 2, "Return", "Land at base.", waypoint=home, prereqs=[kill], radius=2500)
+for o in (fly, kill, land):
+    mission.add_objective(o)
+```
+
+### Events: triggers, timers, sequences, random events
+
+Actions are the game's own `[VTEvent]` list (`pytol.classes.actions`): `SystemActions` (messages, spawning, weather,
+radio), unit actions (`AIAircraftSpawnActions`, `GroundUnitSpawnActions`...), `ObjectiveActions`, `UnitGroupActions`,
+`GlobalValueActions`, `TriggerEventActions`, `EventSequenceActions`, `TimedEventGroupActions`, `BaseActions`.
+
+```python
+from pytol import Trigger, TimedEventGroup, TimedEventInfo
+from pytol.classes.actions import SystemActions
+
+mission.add_trigger_event(Trigger(                   # fires once
+    id=0, name="At the IP", trigger_type="Proximity", waypoint=ip, radius=4000, spherical_radius=False,
+    trigger_mode="Player", proxy_mode="OnEnter",
+    event_targets=[SystemActions().display_message("Push!", 4.0), SystemActions().spawn_units(interceptor_ids)]))
+
+mission.add_timed_event_group(TimedEventGroup(
+    group_name="Check in", group_id=1, begin_immediately=True,
+    events=[TimedEventInfo(event_name="hello", time=20.0,
+                           event_targets=[SystemActions().display_message("Radar contact.", 4.0)])]))
+```
+
+Units with `spawn_on_start=False` appear when an event runs `SystemActions().spawn_units([...])`.
+
+### Conditionals
+
+A conditional is a tree of components (`pytol.classes.conditionals`). Register it once; the id it returns is what
+triggers, objectives, sequences and random events reference.
+
+```python
+from pytol.classes.conditionals import ConditionalTree, create_conditional
+
+tree = ConditionalTree()
+tree.add_comp(0, create_conditional("SCCUnitList", unit_list=[str(i) for i in depot_ids], method_name="SCC_NumAlive",
+                                    method_parameters=["Less_Than", 2], is_not=False))
+tree.add_comp(1, create_conditional("SCCGlobalValue", gv="alarm", comparison="Greater_Than", c_value=0))
+tree.add_comp(2, create_conditional("SCCAnd", factors=[0, 1]))
+tree.set_root(2)
+cond_id = mission.add_conditional(tree)
+
+mission.add_trigger_event(Trigger(id=1, name="Depot hit", trigger_type="Conditional", conditional=cond_id,
+                                  event_targets=[SystemActions().display_message("Depot is burning.", 4.0)]))
+```
+
+- `SCCUnit` / `SCCUnitList` call a method of the unit's class (`SCC_AltitudeRadar`, `SCC_NumAlive`,
+  `SCC_AnyNearWaypoint`...). The method must exist on that class and the parameters must match: some player conditions
+  exist on `PlayerSpawn` but not on `MultiplayerSpawn`. `SCC_Airspeed` takes m/s.
+- `SCCAnd` / `SCCOr` have no negation; negate their inputs instead.
+- `SCCGlobalValue` compares integers against a global value.
+
+### If / else if / else
+
+`ConditionalAction` is the game's IF / ELSE IF / ELSE statement. It runs when an event fires it
+(`SystemActions().fire_conditional_action(id)`).
+
+```python
+from pytol import ConditionalAction, ConditionalBlock
+
+ca = ConditionalAction(
+    id=0, name="Depot check", conditional_id=cond_id,
+    actions=[SystemActions().display_message("Depot is down.", 4.0)],
+    else_if=[ConditionalBlock(conditional_id=other_cond_id, name="partly",
+                              actions=[SystemActions().display_message("Depot is damaged.", 4.0)])],
+    else_actions=[SystemActions().display_message("Depot is intact.", 4.0)],
+    # nested=[ConditionalBlock(...)]: evaluated after `actions` when the condition is true
+)
+mission.add_conditional_action(ca)
+mission.add_trigger_event(Trigger(id=2, name="Check", trigger_type="Proximity", waypoint=ip, radius=3000,
+                                  spherical_radius=False, trigger_mode="Player", proxy_mode="OnEnter",
+                                  event_targets=[SystemActions().fire_conditional_action(ca.id)]))
+```
+
+Blocks may hold a conditional object or the id of a registered one.
+
+### Global values (mission variables)
+
+```python
+from pytol import GlobalValue
+from pytol.classes.actions import GlobalValueActions
+
+mission.add_global_value(GlobalValue(name="alarm", initial_value=0))
+bump = GlobalValueActions("alarm").increment_value(1.0)     # also set_value, decrement_value, reset_value, ...
+```
+
+Use them in `SCCGlobalValue` conditionals or in a `Global_Value` objective (its two values are compared for equality).
+
+### Event sequences and random events
+
+An `EventSequence` runs nodes in order. Each node waits its `delay`, **then** its `conditional`, **then** fires its
+actions. With `while_loop=True` it starts over after the last node. A `RandomEvent` picks one `RandomEventAction` by
+weight each time it is fired (`SystemActions().fire_random_event(id)`).
+
+```python
+from pytol import EventSequence, SequenceEvent, RandomEvent, RandomEventAction
+
+mission.add_event_sequence(EventSequence(
+    id=0, sequence_name="Reinforcements", start_immediately=False,
+    events=[SequenceEvent(node_name="wait for the hit", conditional=cond_id, delay=0.0, actions=[]),
+            SequenceEvent(node_name="launch", delay=90.0,
+                          actions=[SystemActions().spawn_units(interceptor_ids)])]))   # 90 s after the hit
+mission.add_random_event(RandomEvent(id=0, name="Axis", action_options=[
+    RandomEventAction(id=0, action_name="north", fixed_weight=60, actions=[...]),
+    RandomEventAction(id=1, action_name="south", fixed_weight=40, actions=[...])]))
+```
+
+Start a sequence with `EventSequenceActions(id).begin_event()`, stop it with `.stop()`.
 
 ### Base Spawn Points
 
@@ -336,288 +363,6 @@ Notes:
 - Supported prefab types today: 'airbase1', 'airbase2', 'airbase3'.
 - See examples/example_base_spawns.py for a full walkthrough.
 
-### Objectives
-
-Objectives define mission goals and success/failure conditions.
-
-```python
-from pytol import Objective
-
-# Destroy a specific unit
-obj1 = Objective(
-    objective_id=1,
-    objective_type="DESTROY",
-    objective_name="Destroy Enemy Airbase",
-    target_unit_id=2,              # Unit instance ID
-    required_success=True,          # Mission fails if not completed
-    completion_reward=100           # Score points
-)
-
-# Reach a waypoint
-obj2 = Objective(
-    objective_id=2,
-    objective_type="WAYPOINT",
-    objective_name="Reach Extraction Point",
-    waypoint_id="extraction_wp",
-    required_success=False,
-    completion_reward=50
-)
-
-# Protect a unit
-obj3 = Objective(
-    objective_id=3,
-    objective_type="PROTECT",
-    objective_name="Defend Allied Convoy",
-    target_unit_id=5,
-    failure_condition="unit_destroyed",
-    required_success=True
-)
-
-mission.add_objective(obj1)
-mission.add_objective(obj2)
-mission.add_objective(obj3)
-```
-
-**Objective Types:**
-- `"DESTROY"` - Destroy target unit(s)
-- `"WAYPOINT"` - Reach a specific location
-- `"PROTECT"` - Keep a unit alive
-- `"LANDING"` - Land at a specific location
-- `"TIME_SURVIVE"` - Survive for a duration
-- `"FUEL"` - Maintain fuel above threshold
-
-### Conditionals and Events
-
-Conditionals trigger events based on game state. They enable dynamic mission behavior.
-
-```python
-from pytol import Conditional, Action
-
-# When objective completed, spawn reinforcements
-cond1 = Conditional(
-    conditional_id=1,
-    condition_type="objective_complete",
-    objective_id=1
-)
-# Action: Spawn new units
-spawn_action = Action(
-    action_type="spawn_units",
-    unit_ids=[10, 11, 12]  # IDs of units to spawn
-)
-cond1.add_action(spawn_action)
-
-# When player enters area, activate SAM sites
-cond2 = Conditional(
-    conditional_id=2,
-    condition_type="player_in_zone",
-    zone_center=(105000, 500, 52000),
-    zone_radius=2000  # meters
-)
-activate_action = Action(
-    action_type="set_unit_behavior",
-    unit_id=11,
-    new_behavior="attack",
-    detection_mode="radar_on"
-)
-cond2.add_action(activate_action)
-
-# When unit destroyed, fail mission
-cond3 = Conditional(
-    conditional_id=3,
-    condition_type="unit_destroyed",
-    unit_id=5
-)
-fail_action = Action(
-    action_type="fail_mission",
-    message="Allied convoy destroyed!"
-)
-cond3.add_action(fail_action)
-
-mission.add_conditional(cond1)
-mission.add_conditional(cond2)
-mission.add_conditional(cond3)
-```
-
-**Condition Types:**
-- `"objective_complete"` - When objective is completed
-- `"unit_destroyed"` - When a unit is destroyed
-- `"player_in_zone"` - When player enters area
-- `"time_elapsed"` - After a time duration
-- `"global_value"` - When a variable meets criteria
-
-**Action Types:**
-- `"spawn_units"` - Spawn additional units
-- `"set_unit_behavior"` - Change unit AI behavior
-- `"fail_mission"` - End mission as failure
-- `"complete_objective"` - Mark objective as complete
-- `"set_global_value"` - Set mission variable
-- `"play_radio_message"` - Play voice/text radio message
-
-### Global Values (Mission Variables)
-
-Global values are variables that can be read and modified during the mission.
-
-```python
-from pytol import GlobalValue
-
-# Counter for enemy kills
-kill_counter = GlobalValue(
-    value_name="enemy_kills",
-    initial_value=0,
-    value_type="int"
-)
-
-# Boolean flag
-alarm_triggered = GlobalValue(
-    value_name="alarm_active",
-    initial_value=False,
-    value_type="bool"
-)
-
-mission.add_global_value(kill_counter)
-mission.add_global_value(alarm_triggered)
-
-# Use in conditionals
-cond = Conditional(
-    conditional_id=10,
-    condition_type="global_value",
-    value_name="enemy_kills",
-    comparison=">=",
-    target_value=5
-)
-# Action: Complete bonus objective
-bonus_action = Action(
-    action_type="complete_objective",
-    objective_id=4
-)
-cond.add_action(bonus_action)
-mission.add_conditional(cond)
-```
-
-## Complete Example: Strike Mission
-
-```python
-from pytol import Mission, Unit, Objective, Conditional, Action
-
-# Setup
-vtol_path = r"C:\Program Files (x86)\Steam\steamapps\common\VTOL VR"
-
-mission = Mission(
-    scenario_name="Operation Iron Fist",
-    scenario_id="custom_strike",
-    description="Strike enemy airbase and destroy parked aircraft before they can scramble.",
-    vehicle="F/A-26B",
-    map_id="hMap2",
-    vtol_directory=vtol_path,
-    verbose=True
-)
-
-tc = mission.tc  # Access the TerrainCalculator
-mission.mission_info.rtb_location = (98000, 500, 48000)
-
-# Player starts on carrier
-carrier_pos = (95000, 0, 48000)
-carrier = Unit.create_ship(
-    unit_name="CVN Roosevelt",
-    global_position=carrier_pos,
-    unit_instance_id=1,
-    ship_type="CARRIER"
-)
-mission.add_unit(carrier)
-
-# Player aircraft
-player = Unit.create_aircraft(
-    unit_name="Viper 1-1",
-    global_position=(95000, 20, 48050),  # On carrier deck
-    rotation=(0, 0, 0),
-    unit_instance_id=2,
-    aircraft_type="FA-26B",
-    fuel=1.0,
-    start_on_ground=True
-)
-mission.add_unit(player)
-
-# Enemy airbase/city apron with parked aircraft (hMap2 city cluster)
-# Inspired by actual mission coordinates around (x≈58k..65k, z≈114k..120k)
-airbase_x, airbase_z = 57935, 114838
-
-for i in range(4):
-    offset_x = i * 50
-    placement = tc.get_smart_placement(airbase_x + offset_x, airbase_z, yaw_degrees=90)
-    enemy = Unit.create_aircraft(
-        unit_name=f"Enemy Fighter {i+1}",
-        global_position=placement['position'],
-        rotation=placement['rotation'],
-        unit_instance_id=10 + i,
-        aircraft_type="EF-24",
-        start_on_ground=True,
-        engine_startup=False
-    )
-    mission.add_unit(enemy)
-
-# SAM defenses
-sam_positions = [
-    (airbase_x - 500, airbase_z),
-    (airbase_x + 500, airbase_z),
-    (airbase_x, airbase_z - 500),
-    (airbase_x, airbase_z + 500),
-]
-
-for i, (sam_x, sam_z) in enumerate(sam_positions):
-    placement = tc.get_smart_placement(sam_x, sam_z, yaw_degrees=0)
-    sam = Unit.create_ground_unit(
-        unit_name=f"SAM Site {i+1}",
-        global_position=placement['position'],
-        rotation=placement['rotation'],
-        unit_instance_id=20 + i,
-        unit_type="SAM",
-        detection_mode="radar_off"  # Start passive
-    )
-    mission.add_unit(sam)
-
-# Primary objective: Destroy all parked aircraft
-obj_destroy = Objective(
-    objective_id=1,
-    objective_type="DESTROY",
-    objective_name="Destroy Enemy Aircraft",
-    target_unit_ids=[10, 11, 12, 13],  # All enemy fighters
-    required_success=True,
-    completion_reward=200
-)
-mission.add_objective(obj_destroy)
-
-# Secondary objective: RTB safely
-obj_rtb = Objective(
-    objective_id=2,
-    objective_type="LANDING",
-    objective_name="Return to Carrier",
-    landing_location=carrier_pos,
-    required_success=False,
-    completion_reward=100
-)
-mission.add_objective(obj_rtb)
-
-# Event: SAMs go active when player enters 5km
-cond_sams = Conditional(
-    conditional_id=1,
-    condition_type="player_in_zone",
-    zone_center=(110000, 1000, 55000),
-    zone_radius=5000
-)
-for sam_id in range(20, 24):
-    action = Action(
-        action_type="set_unit_behavior",
-        unit_id=sam_id,
-        detection_mode="radar_on"
-    )
-    cond_sams.add_action(action)
-
-mission.add_conditional(cond_sams)
-
-# Save the mission
-mission.save_mission("./output")
-print("Mission created successfully!")
-```
 
 ## Resources
 
@@ -703,32 +448,26 @@ When you call `save_mission()`, Pytol will:
 ## Tips and Best Practices
 
 ### Terrain Placement
-- Always use `TerrainCalculator` for ground units and parked aircraft
-- Call `get_smart_placement()` to automatically handle terrain, roads, and buildings
-- For ships, always use `y=0` (sea level)
-- For airborne aircraft, set appropriate altitude
-
-### Unit IDs
-- Must be unique across all units in the mission
-- Start from 1 (0 is reserved)
-- Use ranges for organization (1-9 player, 10-99 enemies, 100+ allies)
+- Use `mission.add_unit(..., placement="ground")` for ground units and parked aircraft: it uses the smart placement
+- For ships, use `y=0` (sea level); for airborne aircraft set the altitude yourself
+- Check an area with `tc.is_area_clear(x, z, radius)` before placing something big in a town
 
 ### Objectives
-- Set `required_success=True` for mission-critical objectives
-- Use `completion_reward` to guide player priorities
-- Combine multiple objectives for complex missions
+- A required objective that fails ends the mission: make plan A optional when you add a plan B
+- Objectives that start `Triggered` need an event that begins them
+- Combine a `Conditional` objective with a global value for goals the standard types do not cover
 
 ### Testing
+- Run `pytol.parsers.vts_validator` on the saved file: it applies the loader's own rules
 - Test missions in-game before distributing
 - Use descriptive unit names for debugging
-- Check terrain placement with visualization tools
 
 ## Troubleshooting
 
 ### Units spawn underground
-- Ensure you're using `TerrainCalculator.get_smart_placement()`
-- Verify the map_name matches the CustomMaps folder name exactly
-- Check that VTOL VR directory path is correct
+- Use `placement="ground"` in `add_unit` (or `tc.get_smart_placement`)
+- Verify `map_id` matches the CustomMaps folder name exactly
+- Check that the VTOL VR directory path is correct
 
 ### Mission doesn't load
 - Verify `map_id` matches map folder name (case-sensitive)
@@ -736,9 +475,9 @@ When you call `save_mission()`, Pytol will:
 - Check that required objectives exist
 
 ### Objectives don't trigger
-- Confirm `objective_id` in conditionals matches defined objectives
-- Verify `target_unit_id` refers to existing units
-- Check condition types match your intent
+- Check that `targets` are ids returned by `add_unit` and that the units are spawned
+- A `Triggered` objective needs an event that begins it
+- A conditional method must exist on the unit's class and take the parameters you pass
 
 ### Terrain heights seem wrong
 - Some maps (e.g., hm_mtnLake) have encoding issues - see `terrain_behavior.md`
@@ -783,113 +522,3 @@ viz.show()
 - [3D Visualization Guide](../pytol/visualization/README.md) - Interactive 3D visualization
 - [Terrain Behavior Documentation](terrain_behavior.md) - Height sampling and city behavior
 - [API Reference](../README.md) - Complete API documentation
-
-## Event Sequences & Random Events
-
-Pytol supports advanced event scripting using EventSequences (ordered event chains with optional looping and while-conditionals) and RandomEvents (weighted random actions, each with its own conditional graph).
-
-### EventSequence Example
-```python
-from pytol.classes.mission_objects import EventSequence, SequenceEvent, EventTarget, ParamInfo
-from pytol.classes.conditionals import Sccglobalvalue
-
-loop_cond = Sccglobalvalue(gv="counter", comparison="Less_Than", c_value=5)
-seq = EventSequence(
-    id=1,
-    sequence_name="Counter Loop",
-    start_immediately=True,
-    while_loop=True,
-    while_conditional=loop_cond,  # Full graph embedded in SEQUENCE
-    events=[
-        SequenceEvent(
-            node_name="Increment Counter",
-            delay=2.0,
-            actions=[
-                EventTarget(
-                    target_type="GlobalValue",
-                    target_id="counter",
-                    event_name="Increment",
-                    params=[ParamInfo(name="value", type="float", value=1.0)]
-                )
-            ]
-        )
-    ]
-)
-mission.add_event_sequence(seq)
-```
-
-### RandomEvent Example
-```python
-from pytol.classes.mission_objects import RandomEvent, RandomEventAction
-cond = Sccglobalvalue(gv="counter", comparison="Greater_Than", c_value=2)
-re = RandomEvent(
-    id=1,
-    name="Random Test",
-    action_options=[
-        RandomEventAction(
-            id=0,
-            action_name="Action A",
-            fixed_weight=50,
-            conditional=cond,  # Full graph embedded in ACTION
-            actions=[...]
-        ),
-        RandomEventAction(
-            id=1,
-            action_name="Action B",
-            fixed_weight=50,
-            conditional=None,  # Placeholder (id=0)
-            actions=[...]
-        )
-    ]
-)
-mission.add_random_event(re)
-```
-
-**Notes:**
-- If you pass a Conditional object to while_conditional or RandomEventAction.conditional, pytol emits the full graph as a nested CONDITIONAL block.
-- If you pass a string ID, only a reference (or placeholder) is emitted.
-- methodParameters in simple conditionals are now always formatted as a nested block for full VTS compatibility.
-- Proximity triggers only emit `waypoint = null` if no waypoint is provided.
-
-## Global Values & Conditionals
-
-Use global values to track mission state and gate logic with the same mechanisms the VTOL VR editor provides.
-
-```python
-from pytol.classes.mission_objects import GlobalValue, Trigger
-from pytol.classes.conditionals import Sccglobalvalue, Sccunit
-
-mission.add_global_value(GlobalValue(name="counter", initial_value=0))
-
-# Event helper usage mirrors editor events (set, increment, etc.)
-# Assume target_wpt_id and enemy_unit_id were created earlier in the mission setup
-mission.add_trigger_event(
-    Trigger(
-        id=101,
-        name="Increment Counter",
-        trigger_type="Proximity",
-        waypoint=target_wpt_id,
-        radius=200,
-        event_targets=[
-            mission.global_actions["counter"].increment_value(),
-        ],
-    )
-)
-
-# Conditionals are registered once and then referenced by ID
-cond_id = mission.add_conditional(
-    Sccglobalvalue(gv="counter", comparison="Greater_Than", c_value=3)
-)
-mission.add_conditional(
-    Sccunit(unit=str(enemy_unit_id), method_name="IsDestroyed"),
-    conditional_id="destroyed_enemy"
-)
-```
-
-- `add_global_value` stores values under `mission.global_values`; access action helpers through `mission.global_actions["name"]`.
-- `add_conditional` accepts either a single conditional component or a full `ConditionalTree`. It returns the assigned string ID (e.g., `_pytol_cond_0`) so triggers, objectives, event sequences, and random events can reference it.
-- When using `ConditionalTree`, call `tree.add_comp(comp_id, component)` for each node and `tree.set_root(comp_id)` before registration—the serializer emits the full `CONDITIONAL` block with editor-compatible `COMP` entries.
-- Destroy objectives run faster when backed by `Sccunit` or `SccunitGroup` conditionals; you can reference the same IDs inside event sequences or `ConditionalAction` blocks to centralize mission logic.
-
-
-

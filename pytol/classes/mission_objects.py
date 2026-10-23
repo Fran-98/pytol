@@ -142,12 +142,21 @@ class GlobalValue:
     initial_value: Union[int, float] # Starting value
 
 @dataclass
-class ConditionalAction:
-    """Represents an action triggered when a Conditional is met."""
-    id: int                   # Unique integer ID for this action block
-    name: str                 # Name for the action block
-    conditional_id: Union[str, int]  # Integer ID of the Conditional that triggers this (was string, now int)
-    actions: List[EventTarget] = field(default_factory=list) # Actions to execute
+class ConditionalBlock:
+    """An ELSE_IF or NESTED_IF block of a ConditionalAction (same shape as the action's own base block)."""
+    conditional_id: Union[str, int, object]  # Conditional / ConditionalTree object or the id of one added to the mission
+    actions: List[EventTarget] = field(default_factory=list)
+    else_if: List['ConditionalBlock'] = field(default_factory=list)   # tried in order when this condition is false
+    else_actions: List[EventTarget] = field(default_factory=list)    # run when this and every else_if are false
+    nested: List['ConditionalBlock'] = field(default_factory=list)   # evaluated after the actions when this is true
+    name: str = ""
+
+@dataclass
+class ConditionalAction(ConditionalBlock):
+    """An IF / ELSE IF / ELSE statement fired by the Fire Conditional Action event."""
+    id: int = 0               # Unique integer ID for this action block
+    name: str = ""            # Name for the action block
+    conditional_id: Union[str, int, object] = 0  # Conditional (or its id) that gates `actions`
 
 @dataclass
 class SequenceEvent:
